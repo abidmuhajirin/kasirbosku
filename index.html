@@ -18,6 +18,8 @@
   <script src="https://cdn.tailwindcss.com/3.4.5"></script>
   <script>
     tailwind.config = {
+      // Touch screens keep no "hover" colour after a tap
+      future: { hoverOnlyWhenSupported: true },
       theme: {
         extend: {
           fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
@@ -530,9 +532,10 @@
     function PageHeader({ title, desc, actions }) {
       return (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          {/* On phones the top bar already names the page, so the title here is kept for screen readers only */}
           <div>
-            <h2 className="text-xl font-bold text-slate-900">{title}</h2>
-            <span className="mt-1.5 block h-1 w-10 rounded-full bg-sun-400" aria-hidden="true" />
+            <h2 className="text-xl font-bold text-slate-900 max-md:sr-only">{title}</h2>
+            <span className="mt-1.5 block h-1 w-10 rounded-full bg-sun-400 max-md:hidden" aria-hidden="true" />
             {desc && <p className="mt-1 text-sm text-slate-600">{desc}</p>}
           </div>
           {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -583,7 +586,7 @@
       }, []);
 
       return (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in sm:items-center sm:p-4"
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 animate-fade-in sm:items-center sm:p-4"
           onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
           <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
             className={cx('flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-2xl outline-none animate-pop-in sm:rounded-2xl', MODAL_SIZES[size], className)}>
@@ -607,7 +610,7 @@
           {options.map(o => (
             <button key={o.value} type="button" role="radio" aria-checked={value === o.value} onClick={() => onChange(o.value)}
               className={cx('whitespace-nowrap rounded-lg font-semibold transition-colors', full ? 'flex-1 text-center' : 'flex-shrink-0', focusRing,
-                size === 'sm' ? 'min-h-[32px] px-3 text-xs' : 'min-h-[38px] px-3.5 text-sm',
+                size === 'sm' ? 'min-h-[44px] px-3 text-xs md:min-h-[32px]' : 'min-h-[44px] px-3.5 text-sm md:min-h-[38px]',
                 value === o.value ? 'bg-white text-brand-800 shadow-sm' : 'text-slate-600 hover:text-slate-900')}>
               {o.label}
             </button>
@@ -1905,7 +1908,8 @@
       const homeTab = isInvestor ? 'dashboard' : 'pos';
       const activeItem = NAV_ITEMS.find(i => i.id === activeTab) || NAV_ITEMS[1];
       useEffect(() => { if (!canAccess(activeItem)) setActiveTab(homeTab); }, [currentUserId, db.permissions, currentUser.role]);
-      const go = (id) => { const item = NAV_ITEMS.find(i => i.id === id); if (item && !canAccess(item)) return; setActiveTab(id); setSidebarOpen(false); };
+      // The menu closes at once; the new page renders as a low-priority update so a slow tablet never stalls the tap
+      const go = (id) => { const item = NAV_ITEMS.find(i => i.id === id); if (item && !canAccess(item)) return; setSidebarOpen(false); React.startTransition(() => setActiveTab(id)); };
 
       useEffect(() => {
         if (!sidebarOpen) return;
@@ -2142,11 +2146,11 @@
             )}
           </div>
 
-          {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm animate-fade-in xl:hidden" aria-hidden="true" />}
+          {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-slate-900/50 animate-fade-in xl:hidden" aria-hidden="true" />}
 
           {/* SIDEBAR */}
           <aside aria-label="Navigasi utama"
-            className={cx('fixed inset-y-0 left-0 z-40 flex w-72 flex-shrink-0 flex-col bg-brand-700 text-white shadow-2xl transition-transform duration-300 xl:static xl:w-64 xl:translate-x-0 xl:shadow-none',
+            className={cx('fixed inset-y-0 left-0 z-40 flex w-72 flex-shrink-0 flex-col bg-brand-700 text-white shadow-xl transition-transform duration-200 ease-out xl:static xl:w-64 xl:translate-x-0 xl:shadow-none',
               sidebarOpen ? 'translate-x-0' : '-translate-x-full')}>
             <div className="flex items-center justify-between gap-3 border-b border-white/10 p-4">
               <div className="flex min-w-0 items-center gap-3">
@@ -2162,7 +2166,7 @@
               </button>
             </div>
 
-            <nav className="flex-1 overflow-y-auto px-3 py-4 scrollbar-none">
+            <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 scrollbar-none">
               {NAV.map(group => {
                 const items = group.items.filter(canAccess);
                 if (!items.length) return null;
@@ -2189,28 +2193,29 @@
                 <span className="font-medium">Bantuan & Panduan</span>
               </button>
               <p className="px-3 text-[11px] text-brand-200">crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className="font-semibold text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">menjadibos.com</a></p>
-              <div className="rounded-xl bg-white/10 p-3 ring-1 ring-white/15">
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={currentUser.name} className="h-9 w-9 text-sm ring-2 ring-white/40" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{currentUser.name}</p>
-                    <p className="text-xs text-brand-100">{ROLE_LABELS[currentUser.role]}</p>
+              {cloud ? (
+                <div className="flex items-center gap-2.5 rounded-xl bg-white/10 py-1.5 pl-2 pr-1 ring-1 ring-white/15">
+                  <Avatar name={currentUser.name} className="h-8 w-8 text-xs ring-2 ring-white/40" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold leading-tight">{currentUser.name}</p>
+                    <p className="text-xs leading-tight text-brand-100">{ROLE_LABELS[currentUser.role]}</p>
                   </div>
+                  <button type="button" aria-label="Keluar" title="Keluar" onClick={() => sync.status.pending ? setConfirmLogout(true) : onLogout()}
+                    className="inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-brand-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                    <SvgIcon name="logout" className="h-5 w-5" />
+                  </button>
                 </div>
-                {cloud ? (
-                  <div className="mt-2.5">
-                    <Btn variant="secondary" size="sm" icon="logout" className="w-full" onClick={() => sync.status.pending ? setConfirmLogout(true) : onLogout()}>Keluar</Btn>
-                  </div>
-                ) : (
-                <label className="mt-2.5 block">
-                  <span className="text-xs font-medium text-brand-100">Ganti pengguna (mode demo)</span>
-                  <select value={currentUserId} onChange={(e) => switchUser(e.target.value)}
-                    className="mt-1 w-full min-h-[40px] cursor-pointer rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500">
-                    {db.users.filter(u => u.status !== 'Nonaktif').map(u => <option key={u.id} value={u.id}>{u.name} · {ROLE_LABELS[u.role]}</option>)}
-                  </select>
-                </label>
-                )}
-              </div>
+              ) : (
+                <div className="rounded-xl bg-white/10 p-2.5 ring-1 ring-white/15">
+                  <label className="block">
+                    <span className="text-xs font-medium text-brand-100">Ganti pengguna (mode demo)</span>
+                    <select value={currentUserId} onChange={(e) => switchUser(e.target.value)}
+                      className="mt-1 w-full min-h-[40px] cursor-pointer rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                      {db.users.filter(u => u.status !== 'Nonaktif').map(u => <option key={u.id} value={u.id}>{u.name} · {ROLE_LABELS[u.role]}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
             </div>
           </aside>
 
@@ -2233,7 +2238,7 @@
                 {prayerCfg.enabled && (
                   <button type="button" onClick={() => setShowPrayer(true)}
                     aria-label={`Jadwal sholat. Berikutnya ${nextPrayer.label} pukul ${minToHHMM(nextPrayer.time)}, ${fmtDuration(nextPrayer.inMin)} lagi`}
-                    className={cx('inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-900 hover:bg-brand-100', focusRing)}>
+                    className={cx('inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-50 px-2 text-xs font-semibold text-brand-900 hover:bg-brand-100 sm:gap-2 sm:px-2.5', focusRing)}>
                     <SvgIcon name="moon" className="h-4 w-4" />
                     <span className="tabular"><span className="hidden sm:inline">{nextPrayer.label} </span>{minToHHMM(nextPrayer.time)}</span>
                     <span className="hidden font-medium text-brand-700 xl:inline">· {fmtDuration(nextPrayer.inMin)} lagi</span>
@@ -2246,7 +2251,7 @@
                 {/* Attendance quick action for staff */}
                 {!isOwner && !isInvestor && (
                   !myAttendance
-                    ? <Btn size="sm" icon="login" onClick={clockIn} disabled={clocking} className="min-h-[40px]"><span className="hidden sm:inline">Absen masuk</span><span className="sm:hidden">Absen</span></Btn>
+                    ? <Btn size="sm" icon="login" onClick={clockIn} disabled={clocking} className="min-h-[40px]" aria-label="Absen masuk"><span className="hidden sm:inline">Absen masuk</span></Btn>
                     : !myAttendance.clock_out
                       ? <Btn size="sm" variant="secondary" icon="logout" onClick={clockOut} disabled={clocking} className="min-h-[40px]" aria-label={`Absen pulang. Masuk pukul ${fmtTime(myAttendance.clock_in)}`}><span className="hidden sm:inline">Absen pulang</span></Btn>
                       : <Badge tone="green" className="hidden sm:inline-flex">Sudah absen</Badge>
@@ -2750,13 +2755,23 @@
       return new File([blob], `Struk-${sale.receipt_no}.jpg`, { type: 'image/jpeg' });
     }
 
+    // The message that goes with every receipt sent to a customer
+    function receiptThanks(sale, business) {
+      return [`Terima kasih telah berbelanja di ${business.name}.`, `No. invoice: ${sale.receipt_no}`, `Total: ${formatIDR(sale.total)}`].join('\n');
+    }
+
     // Phone: the system share sheet (pick WhatsApp, then the customer).
+    // `file` must already be made: Android only allows sharing straight from the tap, so nothing slow may run before navigator.share.
     // Computer: the picture is saved and copied, and the customer's chat opens so it can be pasted.
-    async function shareReceiptImage(sale, business, phone) {
-      const file = await receiptImageFile(sale, business);
+    async function shareReceiptImage(file, sale, business, phone) {
+      const caption = receiptThanks(sale, business);
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: `Struk ${sale.receipt_no}` }); return 'shared'; }
-        catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+        try { await navigator.share({ files: [file], text: caption }); return 'shared'; }
+        catch (e) {
+          if (e && e.name === 'AbortError') return 'cancelled';
+          if (e && e.name === 'NotAllowedError') return 'retry';
+          throw e;
+        }
       }
       const url = URL.createObjectURL(file);
       const a = document.createElement('a'); a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
@@ -2771,7 +2786,7 @@
           copied = true;
         }
       } catch {}
-      if (phone) window.open(`https://wa.me/${phone}?text=${encodeURIComponent(`Struk ${sale.receipt_no} dari ${business.name}`)}`, '_blank', 'noopener');
+      if (phone) window.open(`https://wa.me/${phone}?text=${encodeURIComponent(caption)}`, '_blank', 'noopener');
       return copied ? 'copied' : 'downloaded';
     }
 
@@ -2779,7 +2794,7 @@
     const waNumber = (phone) => { const d = String(phone || '').replace(/\D/g, '').replace(/^0/, '62'); return /^62\d{8,13}$/.test(d) ? d : ''; };
     function receiptWaLink(sale, business, phone) {
       const body = receiptLines(sale, business, 32).map(l => l.text).join('\n');
-      return `https://wa.me/${phone}?text=${encodeURIComponent('```\n' + body + '\n```')}`;
+      return `https://wa.me/${phone}?text=${encodeURIComponent(receiptThanks(sale, business) + '\n\n```\n' + body + '\n```')}`;
     }
 
     // Settings → Struk: which printer this device uses, and a test print
@@ -2820,13 +2835,24 @@
       const phone = savedPhone || waNumber(typedPhone);
       const [sending, setSending] = useState(false);
       const [shareNote, setShareNote] = useState('');
+      // The picture is drawn as soon as the receipt opens, so tapping "Kirim" can open the share sheet right away
+      const [imageFile, setImageFile] = useState(null);
+      const [imageFailed, setImageFailed] = useState(false);
+      useEffect(() => {
+        if (sale.status === 'void') return;
+        let alive = true;
+        receiptImageFile(sale, business).then(f => alive && setImageFile(f), () => alive && setImageFailed(true));
+        return () => { alive = false; };
+      }, [sale.id, sale.status]);
       const sendImage = async () => {
+        if (!imageFile) return;
         setSending(true); setShareNote('');
         try {
-          const r = await shareReceiptImage(sale, business, phone);
+          const r = await shareReceiptImage(imageFile, sale, business, phone);
           if (r === 'copied') setShareNote('Gambar struk disalin dan diunduh. Tempel (Ctrl+V) di chat WhatsApp yang terbuka.');
           if (r === 'downloaded') setShareNote('Gambar struk diunduh. Lampirkan di chat WhatsApp pelanggan.');
-        } catch { setShareNote('Gambar struk gagal dibuat. Kirim sebagai teks saja.'); }
+          if (r === 'retry') setShareNote('Menu Bagikan belum terbuka. Ketuk "Kirim gambar struk" sekali lagi.');
+        } catch { setShareNote('Gambar struk gagal dikirim. Pakai tombol Teks.'); }
         finally { setSending(false); }
       };
       const firstName = savedPhone ? customer.name.split(' ')[0] : 'pelanggan';
@@ -2852,12 +2878,12 @@
                   </label>
                 )}
                 <div className="flex gap-2">
-                  <Btn variant="success" icon="photo" className="flex-1" onClick={sendImage} disabled={sending}>{sending ? 'Menyiapkan…' : 'Kirim gambar struk'}</Btn>
+                  <Btn variant="success" icon="photo" className="flex-1" onClick={sendImage} disabled={sending || !imageFile}>{imageFailed ? 'Gambar gagal dibuat' : !imageFile ? 'Menyiapkan gambar…' : sending ? 'Membuka…' : 'Kirim gambar struk'}</Btn>
                   {phone
                     ? <a href={receiptWaLink(sale, business, phone)} target="_blank" rel="noreferrer" className={cx('inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50', focusRing)}><SvgIcon name="chat" className="h-4 w-4" />Teks</a>
                     : <span className="inline-flex min-h-[44px] items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-400" title="Isi nomor WhatsApp dulu">Teks</span>}
                 </div>
-                <p className="text-xs text-emerald-900">{phone ? `Ke WhatsApp ${firstName} (${'0' + phone.slice(2)}). ` : ''}Gambar dikirim lewat menu Bagikan: pilih WhatsApp, lalu pilih kontaknya. Tombol Teks langsung membuka chat nomor ini.</p>
+                <p className="text-xs text-emerald-900">{phone ? `Ke WhatsApp ${firstName} (${'0' + phone.slice(2)}). ` : ''}Gambar dikirim lewat menu Bagikan bersama ucapan terima kasih dan nomor invoice: pilih WhatsApp, lalu pilih kontaknya. Tombol Teks langsung membuka chat nomor ini.</p>
                 {shareNote && <p className="text-xs font-medium text-emerald-900" role="status">{shareNote}</p>}
               </div>
             )}
@@ -3199,7 +3225,7 @@
       const today = dateKey();
       const todaySales = allSalesOf(db).filter(s => isValidSale(s) && saleDay(s) === today);
       const todayRevenue = todaySales.reduce((a, s) => a + s.total, 0);
-      const recentSales = allSalesOf(db).filter(s => isOwner || s.cashier_id === currentUser.id).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20);
+      const recentSales = allSalesOf(db).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20);
 
       const q = searchQuery.trim().toLowerCase();
       const filteredProducts = db.products.filter(p =>
@@ -3489,7 +3515,7 @@
                             <div className="min-w-0">
                               <p className={cx('truncate font-mono text-xs font-semibold text-slate-900', s.status === 'void' && 'line-through text-slate-400')}>{s.receipt_no}</p>
                               <p className="truncate text-xs text-slate-500">
-                                {saleDay(s) === today ? fmtTime(s.date) : fmtDateTime(s.date)} · {PAYMENT_LABELS[s.payment_method]} · {s.customer_name}{isOwner ? ` · ${s.cashier}` : ''}
+                                {saleDay(s) === today ? fmtTime(s.date) : fmtDateTime(s.date)} · {PAYMENT_LABELS[s.payment_method]} · {s.customer_name} · {s.cashier_id === currentUser.id ? 'Anda' : s.cashier}
                               </p>
                               {s.status === 'void' && <Badge tone="rose" className="mt-0.5">Dibatalkan</Badge>}
                             </div>
@@ -3816,12 +3842,12 @@
       const [from, to] = rangeBounds(range, customFrom, customTo);
       const singleDay = from === to;
 
-      // Staff only see their own sales; the owner sees everyone
+      // Everyone sees the whole store's sales and can narrow them to one cashier
       const scoped = allSalesOf(db).filter(s => {
         const k = saleDay(s);
         if (k < from || k > to) return false;
-        if (!isOwner && s.cashier_id !== currentUser.id) return false;
-        if (isOwner && cashierFilter !== 'all' && s.cashier_id !== cashierFilter) return false;
+        if (cashierFilter === 'me' && s.cashier_id !== currentUser.id) return false;
+        if (cashierFilter !== 'all' && cashierFilter !== 'me' && s.cashier_id !== cashierFilter) return false;
         if (methodFilter !== 'all' && s.payment_method !== methodFilter) return false;
         return true;
       });
@@ -3930,7 +3956,7 @@
 
       return (
         <div className="space-y-5">
-          <PageHeader title="Laporan Penjualan" desc={isOwner ? 'Semua transaksi toko.' : 'Transaksi yang Anda layani.'}
+          <PageHeader title="Laporan Penjualan" desc="Semua transaksi toko. Pilih kasir untuk melihat penjualan satu orang."
             actions={<Btn variant="secondary" icon="download" onClick={exportReport} disabled={!scoped.length}>Export Excel (CSV)</Btn>} />
 
           {pendingRequests.length > 0 && (
@@ -3962,14 +3988,13 @@
                 <Field label="Dari"><input type="date" value={customFrom} max={customTo} onChange={e => setCustomFrom(e.target.value)} className={inputCls} /></Field>
                 <Field label="Sampai"><input type="date" value={customTo} min={customFrom} max={dateKey()} onChange={e => setCustomTo(e.target.value)} className={inputCls} /></Field>
               </>}
-              {isOwner && (
-                <Field label="Kasir">
-                  <select value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} className={inputCls}>
-                    <option value="all">Semua kasir</option>
-                    {db.users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
-                </Field>
-              )}
+              <Field label="Kasir">
+                <select value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} className={inputCls}>
+                  <option value="all">Semua kasir</option>
+                  {!isOwner && <option value="me">Penjualan saya</option>}
+                  {db.users.filter(u => u.role !== 'investor').map(u => <option key={u.id} value={u.id}>{u.name}{u.id === currentUser.id ? ' (saya)' : ''}</option>)}
+                </select>
+              </Field>
               <Field label="Metode bayar">
                 <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)} className={inputCls}>
                   <option value="all">Semua metode</option>
@@ -4019,7 +4044,7 @@
                   ))}
                 </ul>
               )}
-              {isOwner && byCashier.length > 0 && <>
+              {byCashier.length > 0 && <>
                 <h3 className="mt-6 text-base font-bold text-slate-900">Per kasir</h3>
                 <ul className="mt-3 space-y-2">
                   {byCashier.map(x => (
@@ -4086,7 +4111,7 @@
                   <tr>
                     <SortTh label="Waktu" k="date" sort={txSort} setSort={setTxSort} />
                     <th scope="col" className="px-4 py-3 font-semibold uppercase tracking-wide text-slate-600">Nota</th>
-                    {isOwner && <th scope="col" className="px-4 py-3 font-semibold uppercase tracking-wide text-slate-600">Kasir</th>}
+                    <th scope="col" className="px-4 py-3 font-semibold uppercase tracking-wide text-slate-600">Kasir</th>
                     <th scope="col" className="px-4 py-3 font-semibold uppercase tracking-wide text-slate-600">Pelanggan</th>
                     <th scope="col" className="px-4 py-3 font-semibold uppercase tracking-wide text-slate-600">Metode</th>
                     <SortTh label="Total" k="total" sort={txSort} setSort={setTxSort} align="right" />
@@ -4104,7 +4129,7 @@
                         {s.status !== 'void' && s.void_request?.status === 'rejected' && <Badge tone="slate" className="ml-2">Batal ditolak</Badge>}
                         {s.sync_status === 'pending_sync' && <Badge tone="amber" className="ml-2">Belum sinkron</Badge>}
                       </td>
-                      {isOwner && <td className="px-4 py-2.5">{s.cashier}</td>}
+                      <td className="px-4 py-2.5">{s.cashier}</td>
                       <td className="px-4 py-2.5">{s.customer_name}</td>
                       <td className="px-4 py-2.5"><Badge tone={s.payment_method === 'bayar_nanti' ? 'amber' : 'slate'}>{PAYMENT_LABELS[s.payment_method]}</Badge></td>
                       <td className="px-4 py-2.5 text-right font-semibold tabular">{formatIDR(s.total)}</td>
@@ -6620,7 +6645,7 @@
       };
       const remove = (it) => setCart(prev => prev.filter(c => c.id !== it.id));
       return (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/60 backdrop-blur-sm animate-fade-in" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/60 animate-fade-in" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
           <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="flex h-full w-full max-w-sm flex-col bg-white shadow-2xl animate-slide-in-right">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h3 id={titleId} className="flex items-center gap-2 text-base font-bold text-slate-900">Keranjang <Badge tone="teal"><span className="tabular">{itemCount}</span> item</Badge></h3>
