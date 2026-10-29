@@ -1,6 +1,6 @@
 // KasirBosku service worker: keeps the app and its libraries on the device so it opens without internet.
 // Naikkan VERSION setiap kali daftar LIBS berubah (index.html tidak perlu: selalu diambil baru saat online).
-const VERSION = 'kb-v4';
+const VERSION = 'kb-v5';
 const APP = ['./', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 // Fetched in CORS mode so they also satisfy <script crossorigin> tags
 const LIBS = [
