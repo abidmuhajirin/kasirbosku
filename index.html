@@ -2216,7 +2216,8 @@
 
           {/* MAIN */}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="z-20 flex h-16 flex-shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 sm:px-6">
+            {/* On phones the cashier screen drops the top bar for more room; the bottom bar still has every menu */}
+            <header className={cx('z-20 flex h-16 flex-shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 sm:px-6', activeTab === 'pos' && 'max-md:hidden')}>
               <div className="flex min-w-0 items-center gap-2">
                 <IconBtn icon="menu" label="Buka menu" onClick={() => setSidebarOpen(true)} className="xl:hidden" />
                 <div className="min-w-0">
@@ -2700,6 +2701,80 @@
       );
     }
 
+    // The receipt drawn as a picture that looks like the on-screen preview (for sharing on WhatsApp)
+    async function receiptImageFile(sale, business) {
+      const cols = RECEIPT_COLS['58'];
+      const S = 2, font = 22 * S, lineH = Math.round(font * 1.45), pad = 28 * S;
+      const mono = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
+      const probe = document.createElement('canvas').getContext('2d');
+      probe.font = `${font}px ${mono}`;
+      const charW = probe.measureText('M').width;
+      const W = Math.ceil(charW * cols + pad * 2);
+      const lines = receiptLines(sale, business, cols);
+      let logo = null;
+      if (business.receipt?.show_logo && business.receipt?.logo) {
+        logo = await new Promise(res => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => res(null); i.src = business.receipt.logo; });
+      }
+      const logoH = logo ? Math.min(110 * S, logo.height * Math.min(1, (W * 0.5) / logo.width)) : 0;
+      const H = pad * 2 + (logo ? logoH + 12 * S : 0) + lines.reduce((a, l) => a + (l.big ? lineH * 1.25 : lineH), 0);
+      const c = document.createElement('canvas'); c.width = W; c.height = Math.ceil(H);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, c.height);
+      let y = pad;
+      if (logo) {
+        const lw = logo.width * (logoH / logo.height);
+        ctx.filter = 'grayscale(1)';
+        ctx.drawImage(logo, (W - lw) / 2, y, lw, logoH);
+        ctx.filter = 'none';
+        y += logoH + 12 * S;
+      }
+      ctx.fillStyle = '#1e293b'; ctx.textBaseline = 'top';
+      for (const l of lines) {
+        const size = l.big ? Math.round(font * 1.2) : font;
+        ctx.font = `${l.bold || l.big ? 'bold ' : ''}${size}px ${mono}`;
+        const text = l.text.trimEnd();
+        if (/^-+$/.test(text)) {
+          // dashed rule, like the preview
+          ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = S; ctx.setLineDash([6 * S, 5 * S]);
+          ctx.beginPath(); ctx.moveTo(pad, y + lineH / 2); ctx.lineTo(W - pad, y + lineH / 2); ctx.stroke(); ctx.setLineDash([]);
+        } else if (l.align === 'center') {
+          ctx.textAlign = 'center'; ctx.fillText(text, W / 2, y);
+        } else {
+          ctx.textAlign = 'left';
+          // keep the receipt's columns: draw character runs at fixed positions
+          ctx.fillText(l.text, pad, y);
+        }
+        y += l.big ? lineH * 1.25 : lineH;
+      }
+      const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.92));
+      return new File([blob], `Struk-${sale.receipt_no}.jpg`, { type: 'image/jpeg' });
+    }
+
+    // Phone: the system share sheet (pick WhatsApp, then the customer).
+    // Computer: the picture is saved and copied, and the customer's chat opens so it can be pasted.
+    async function shareReceiptImage(sale, business, phone) {
+      const file = await receiptImageFile(sale, business);
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: `Struk ${sale.receipt_no}` }); return 'shared'; }
+        catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+      }
+      const url = URL.createObjectURL(file);
+      const a = document.createElement('a'); a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      let copied = false;
+      try {
+        if (window.ClipboardItem && navigator.clipboard?.write) {
+          const c = document.createElement('canvas'); const img = await createImageBitmap(file);
+          c.width = img.width; c.height = img.height; c.getContext('2d').drawImage(img, 0, 0);
+          const png = await new Promise(res => c.toBlob(res, 'image/png'));
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+          copied = true;
+        }
+      } catch {}
+      if (phone) window.open(`https://wa.me/${phone}?text=${encodeURIComponent(`Struk ${sale.receipt_no} dari ${business.name}`)}`, '_blank', 'noopener');
+      return copied ? 'copied' : 'downloaded';
+    }
+
     // Sends the receipt to the customer's WhatsApp (monospace block so the columns line up)
     const waNumber = (phone) => { const d = String(phone || '').replace(/\D/g, '').replace(/^0/, '62'); return /^62\d{8,13}$/.test(d) ? d : ''; };
     function receiptWaLink(sale, business, phone) {
@@ -2739,7 +2814,22 @@
       const [error, setError] = useState('');
       const printer = loadPrinter();
       const customer = customers.find(c => c.id === sale.customer_id);
-      const phone = customer && customer.id !== 'cust-1' ? waNumber(customer.phone) : '';
+      const savedPhone = customer && customer.id !== 'cust-1' ? waNumber(customer.phone) : '';
+      // No number on the sale's customer (or a walk-in buyer): the cashier can type it now
+      const [typedPhone, setTypedPhone] = useState('');
+      const phone = savedPhone || waNumber(typedPhone);
+      const [sending, setSending] = useState(false);
+      const [shareNote, setShareNote] = useState('');
+      const sendImage = async () => {
+        setSending(true); setShareNote('');
+        try {
+          const r = await shareReceiptImage(sale, business, phone);
+          if (r === 'copied') setShareNote('Gambar struk disalin dan diunduh. Tempel (Ctrl+V) di chat WhatsApp yang terbuka.');
+          if (r === 'downloaded') setShareNote('Gambar struk diunduh. Lampirkan di chat WhatsApp pelanggan.');
+        } catch { setShareNote('Gambar struk gagal dibuat. Kirim sebagai teks saja.'); }
+        finally { setSending(false); }
+      };
+      const firstName = savedPhone ? customer.name.split(' ')[0] : 'pelanggan';
       const doPrint = async (method) => {
         setError(''); setPrinting(true);
         try { await printReceipt(sale, business, method); }
@@ -2752,14 +2842,25 @@
       return (
         <Modal title={title || (sale.payment_method === 'bayar_nanti' ? 'Kasbon tercatat' : 'Transaksi berhasil')} onClose={onClose} size="sm"
           footer={<div className="flex w-full flex-col gap-2">
-            {sale.status !== 'void' && (phone ? (
-              <a href={receiptWaLink(sale, business, phone)} target="_blank" rel="noreferrer"
-                className={cx('inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700', focusRing)}>
-                <SvgIcon name="chat" className="h-4 w-4" />Kirim struk ke WhatsApp {customer.name.split(' ')[0]}
-              </a>
-            ) : (
-              <p className="text-center text-xs text-slate-500">Pilih pelanggan yang punya nomor WhatsApp di kasir untuk mengirim struk lewat WA.</p>
-            ))}
+            {sale.status !== 'void' && (
+              <div className="space-y-2 rounded-xl bg-emerald-50 p-3 ring-1 ring-emerald-200">
+                {!savedPhone && (
+                  <label className="block">
+                    <span className="text-xs font-semibold text-emerald-900">No. WhatsApp pelanggan</span>
+                    <input type="tel" inputMode="numeric" value={typedPhone} onChange={e => setTypedPhone(e.target.value.replace(/[^\d+]/g, '').slice(0, 16))}
+                      placeholder="cth. 081234567890" className={cx(inputCls, 'mt-1')} />
+                  </label>
+                )}
+                <div className="flex gap-2">
+                  <Btn variant="success" icon="photo" className="flex-1" onClick={sendImage} disabled={sending}>{sending ? 'Menyiapkan…' : 'Kirim gambar struk'}</Btn>
+                  {phone
+                    ? <a href={receiptWaLink(sale, business, phone)} target="_blank" rel="noreferrer" className={cx('inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50', focusRing)}><SvgIcon name="chat" className="h-4 w-4" />Teks</a>
+                    : <span className="inline-flex min-h-[44px] items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-400" title="Isi nomor WhatsApp dulu">Teks</span>}
+                </div>
+                <p className="text-xs text-emerald-900">{phone ? `Ke WhatsApp ${firstName} (${'0' + phone.slice(2)}). ` : ''}Gambar dikirim lewat menu Bagikan: pilih WhatsApp, lalu pilih kontaknya. Tombol Teks langsung membuka chat nomor ini.</p>
+                {shareNote && <p className="text-xs font-medium text-emerald-900" role="status">{shareNote}</p>}
+              </div>
+            )}
             <div className="flex gap-2">
               <Btn variant="secondary" icon="printer" className="flex-1" onClick={onPrint} disabled={printing}>{printing ? 'Mencetak…' : 'Cetak'}</Btn>
               <Btn className="flex-1" onClick={onClose} autoFocus>Selesai</Btn>
@@ -3064,6 +3165,14 @@
       const [openAfterSession, setOpenAfterSession] = useState(false);
       const [quickCustomer, setQuickCustomer] = useState(null);
       const [cartTab, setCartTab] = useState('sale');
+      // Phones: the cart is a full-screen sheet opened from the bottom button
+      const [cartSheet, setCartSheet] = useState(false);
+      useEffect(() => {
+        if (!cartSheet) return;
+        const onKey = (e) => { if (e.key === 'Escape') setCartSheet(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [cartSheet]);
       const [showVoucher, setShowVoucher] = useState(false);
       const [reprint, setReprint] = useState(null);
       const boxBtn = 'inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100';
@@ -3160,6 +3269,7 @@
             : { ...prev, products, customers, sales: [sale, ...prev.sales] };
         });
         setReceipt(sale);
+        setCartSheet(false);
         resetCheckout();
       };
 
@@ -3205,7 +3315,6 @@
         if (openAfterSession) { setOpenAfterSession(false); setPaymentModalOpen(true); }
       };
 
-      const scrollToCart = () => document.getElementById('cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       const panelHeight = openSession ? 'md:h-[calc(100vh-8rem)] md:min-h-[520px]' : 'md:h-[calc(100vh-13rem)] md:min-h-[520px]';
       const itemCount = cart.reduce((a, c) => a + c.qty, 0);
 
@@ -3330,7 +3439,13 @@
             </Card>
 
             {/* CART */}
-            <Card id="cart-panel" aria-label="Panel kasir" className={cx('flex scroll-mt-4 flex-col p-4 sm:p-5 md:sticky md:top-0 md:col-span-5 xl:col-span-4', panelHeight)}>
+            <Card id="cart-panel" aria-label="Panel kasir" role={cartSheet ? 'dialog' : undefined} aria-modal={cartSheet || undefined}
+              className={cx('flex-col p-4 sm:p-5 md:sticky md:top-0 md:col-span-5 md:flex xl:col-span-4', panelHeight,
+                cartSheet ? 'flex max-md:fixed max-md:inset-0 max-md:z-50 max-md:h-full max-md:rounded-none max-md:border-0 max-md:pb-[max(1rem,env(safe-area-inset-bottom))] max-md:pt-[max(1rem,env(safe-area-inset-top))] animate-pop-in md:animate-none' : 'hidden')}>
+              <div className="mb-3 flex items-center justify-between md:hidden">
+                <p className="text-base font-bold text-slate-900">Keranjang</p>
+                <IconBtn icon="x" label="Tutup keranjang" onClick={() => setCartSheet(false)} />
+              </div>
               <div className="flex items-center gap-2">
                 <div role="tablist" aria-label="Panel kasir" className="grid flex-1 grid-cols-2 rounded-xl bg-slate-100 p-1">
                   {[['sale', 'Penjualan', itemCount], ['recent', 'Kas & Riwayat', 0]].map(([v, label, count]) => (
@@ -3389,12 +3504,11 @@
                   </div>
                 </div>
               ) : <>
-              <div className="mt-3 flex items-end gap-2">
-                <Field label="Pelanggan" className="flex-1">
-                  <select value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'cursor-pointer')}>
-                    {db.customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.debt > 0 ? ` · kasbon ${formatIDR(c.debt)}` : ''}</option>)}
-                  </select>
-                </Field>
+              <div className="mt-3 flex items-center gap-2">
+                <label htmlFor="pos-customer" className="sr-only">Pelanggan</label>
+                <select id="pos-customer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'h-11 flex-1 cursor-pointer')}>
+                  {db.customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.debt > 0 ? ` · kasbon ${formatIDR(c.debt)}` : ''}</option>)}
+                </select>
                 <IconBtn icon="userPlus" label="Tambah pelanggan baru" onClick={() => setQuickCustomer({ name: '', phone: '' })} className="border border-slate-300" />
               </div>
 
@@ -3499,11 +3613,13 @@
             </Card>
           </div>
 
-          {cart.length > 0 && (
-            <div className="sticky bottom-0 z-10 -mx-4 border-t border-slate-200 bg-white/95 p-3 backdrop-blur md:hidden">
-              <Btn className="w-full" onClick={scrollToCart}>Lihat keranjang · {itemCount} item · {formatIDR(grandTotal)}</Btn>
-            </div>
-          )}
+          {/* Pinned just above the bottom menu; the spacer keeps the last products clear of it */}
+          <div className="h-16 md:hidden" aria-hidden="true" />
+          <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur md:hidden">
+            <Btn className="w-full" icon="cart" onClick={() => setCartSheet(true)}>
+              {cart.length ? `Lihat keranjang · ${itemCount} item · ${formatIDR(grandTotal)}` : 'Lihat keranjang · Kas & Riwayat'}
+            </Btn>
+          </div>
 
           {paymentModalOpen && (
             <Modal title="Pembayaran" desc={`Total tagihan ${formatIDR(grandTotal)}`} onClose={() => setPaymentModalOpen(false)}
