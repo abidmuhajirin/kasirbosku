@@ -56,6 +56,10 @@
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     .scrollbar-none::-webkit-scrollbar { display: none; }
+    /* Android draws native selects short and pill-shaped; this keeps every select the same height and shape as inputs */
+    select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .75rem center; background-size: 1.125rem; padding-right: 2.25rem !important; }
+    /* Expired or disabled license: the whole app turns grey behind the notice */
+    html.license-locked #root { filter: grayscale(1); }
     .scrollbar-none { scrollbar-width: none; }
 
     @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
@@ -378,6 +382,7 @@
       volume: 'M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z',
       ban: 'M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636',
       calendar: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+      history: 'M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 4v5h5',
       receipt: 'M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z'
     };
 
@@ -398,6 +403,7 @@
       success: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm',
       secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50',
       danger: 'bg-rose-600 text-white hover:bg-rose-700',
+      dangerSoft: 'border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100',
       warning: 'bg-amber-400 text-slate-900 hover:bg-amber-300',
       ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
       dark: 'bg-slate-900 text-white hover:bg-slate-800'
@@ -408,7 +414,7 @@
         <button
           type="button"
           className={cx(
-            'inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+            'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50',
             focusRing,
             size === 'sm' ? 'min-h-[36px] px-3 text-xs' : 'min-h-[44px] px-4 text-sm',
             BTN_VARIANTS[variant], className
@@ -526,7 +532,7 @@
     );
 
     const Card = ({ className, children, ...rest }) => (
-      <section className={cx('rounded-2xl border border-slate-200 bg-white shadow-sm', className)} {...rest}>{children}</section>
+      <section className={cx('rounded-2xl border border-slate-200 bg-white', className)} {...rest}>{children}</section>
     );
 
     function PageHeader({ title, desc, actions }) {
@@ -534,7 +540,7 @@
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           {/* On phones the top bar already names the page, so the title here is kept for screen readers only */}
           <div>
-            <h2 className="text-xl font-bold text-slate-900 max-md:sr-only">{title}</h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900 max-md:sr-only">{title}</h2>
             <span className="mt-1.5 block h-1 w-10 rounded-full bg-sun-400 max-md:hidden" aria-hidden="true" />
             {desc && <p className="mt-1 text-sm text-slate-600">{desc}</p>}
           </div>
@@ -943,10 +949,33 @@
     const saleDay = (s) => dateKey(new Date(s.date));
     const allSalesOf = (db) => [...db.offlineQueue, ...db.sales];
 
+    // A cart/sale line for a variant has id "product::variant"; stock and cost belong to the product
+    const productIdOf = (it) => it.product_id || String(it.id).split('::')[0];
+
+    // Which kasbon sales are paid off. The customer's open balance covers their newest kasbon first; anything older is paid.
+    // Worked out from the balance, so it also holds for kasbon paid before this rule existed and on every device.
+    function kasbonStatusMap(db) {
+      const map = new Map(), groups = {};
+      allSalesOf(db).filter(s => s.payment_method === 'bayar_nanti' && s.status !== 'void').forEach(s => (groups[s.customer_id || s.customer_name] ||= []).push(s));
+      for (const [cid, list] of Object.entries(groups)) {
+        const c = db.customers.find(x => x.id === cid || x.name === cid);
+        let open = c ? (c.debt || 0) : 0;
+        list.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(sale => {
+          if (open >= sale.total) { map.set(sale.id, 'unpaid'); open -= sale.total; }
+          else if (open > 0) { map.set(sale.id, 'partial'); open = 0; }
+          else map.set(sale.id, 'paid');
+        });
+      }
+      return map;
+    }
+    const withKasbonStatus = (sale, db) => sale && sale.payment_method === 'bayar_nanti' && sale.status !== 'void' ? { ...sale, kasbon_status: kasbonStatusMap(db).get(sale.id) } : sale;
+    const paymentLabel = (sale) => sale.payment_method !== 'bayar_nanti' ? PAYMENT_LABELS[sale.payment_method]
+      : sale.kasbon_status === 'paid' ? 'LUNAS' : sale.kasbon_status === 'partial' ? 'Kasbon (dibayar sebagian)' : 'Kasbon';
+
     // HPP from each product's real buy price; 45% of price only for items whose product was deleted
     function saleCost(sale, products) {
       return sale.items.reduce((a, it) => {
-        const p = products.find(x => x.id === it.id);
+        const p = products.find(x => x.id === productIdOf(it));
         return a + it.qty * (p ? p.buy_price : it.sell_price * 0.45);
       }, 0);
     }
@@ -1143,6 +1172,7 @@
         { id: 'investors', label: 'Portal Investor', icon: 'investors', ownerOnly: true }
       ]},
       { section: 'Lainnya', items: [
+        { id: 'activity', label: 'Log Aktivitas', icon: 'history', ownerOnly: true },
         { id: 'settings', label: 'Pengaturan Toko', icon: 'settings', ownerOnly: true }
       ]}
     ];
@@ -1280,7 +1310,7 @@
     }
 
     class ApiError extends Error {
-      constructor(status, message) { super(message); this.status = status; }
+      constructor(status, message, code) { super(message); this.status = status; this.code = code; }
     }
     async function apiFetch(path, { token, method = 'GET', json, blob } = {}) {
       const headers = {};
@@ -1291,7 +1321,7 @@
       try { res = await fetch(CLOUD_API + path, { method, headers, body: blob || (json !== undefined ? JSON.stringify(json) : undefined) }); }
       catch { throw new ApiError(0, 'Tidak ada koneksi ke server. Periksa internet.'); }
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status, data.error || `Server sedang bermasalah (${res.status}).`);
+      if (!res.ok) throw new ApiError(res.status, data.error || `Server sedang bermasalah (${res.status}).`, data.code);
       return data;
     }
 
@@ -1396,13 +1426,149 @@
       return next;
     }
 
+    // ---------- Activity log ----------
+    // Each device keeps what its users did in a small queue; the queue goes to the server with every sync and only the Bos reads it.
+    const logQueueKey = (tenantId) => tenantId ? cloudKey(tenantId, 'logq') : 'kasirbosku_logq_demo';
+    function appendLog(tenantId, user, entries) {
+      if (!entries.length || !user) return;
+      const at = new Date(trueNow()).toISOString();
+      const q = readLocal(logQueueKey(tenantId), []) || [];
+      entries.forEach(e => q.push({ id: generateId('LOG'), at, user_id: user.id, user_name: user.name, role: user.role, ...e }));
+      // Demo mode has no server, so its log is the queue itself; a cloud device only holds unsent entries
+      writeLocal(logQueueKey(tenantId), q.slice(-(tenantId ? 3000 : 500)));
+    }
+    async function flushLogs(tenantId, token) {
+      const key = logQueueKey(tenantId);
+      for (let round = 0; round < 20; round++) {
+        const q = readLocal(key, []) || [];
+        if (!q.length) return;
+        const batch = q.slice(0, 200);
+        await apiFetch('/api/logs', { token, method: 'POST', json: { entries: batch } });
+        const sent = new Set(batch.map(e => e.id));
+        writeLocal(key, (readLocal(key, []) || []).filter(e => !sent.has(e.id)));
+      }
+    }
+
+    // Turns a change to the store's data into readable lines: "Mengubah produk Es Teh (harga jual Rp 5.000 → Rp 6.000)"
+    const LOG_FIELDS = { name: 'nama', sku: 'SKU', category: 'kategori', buy_price: 'HPP', sell_price: 'harga jual', promo_price: 'harga promo', stock: 'stok', min_stock: 'stok minimum', unit: 'satuan', img: 'foto', variants: 'varian', phone: 'no. HP', address: 'alamat', role: 'peran', status: 'status', base_salary: 'gaji pokok', username: 'ID login', shift_id: 'shift', debt: 'kasbon' };
+    const MONEY_FIELDS = new Set(['buy_price', 'sell_price', 'promo_price', 'base_salary', 'debt', 'amount', 'total']);
+    const LOG_COLLS = {
+      products: { kind: 'produk', label: 'produk' },
+      customers: { kind: 'pelanggan', label: 'pelanggan', quiet: ['debt', 'total_spent', 'visits'] },
+      suppliers: { kind: 'pembelian', label: 'pemasok' },
+      users: { kind: 'karyawan', label: 'akun', quiet: ['password_hash', 'password_salt'] },
+      purchases: { kind: 'pembelian', label: 'pesanan barang', name: r => r.po_number },
+      expenses: { kind: 'keuangan', label: 'pengeluaran', name: r => `${r.category || r.note || ''} ${formatIDR(r.amount || 0)}`.trim() },
+      coupons: { kind: 'promo', label: 'voucher', name: r => r.code },
+      seasonal_promos: { kind: 'promo', label: 'promo musiman' },
+      employeeIncentives: { kind: 'promo', label: 'target karyawan' },
+      investors: { kind: 'keuangan', label: 'investor' },
+      investor_payouts: { kind: 'keuangan', label: 'bagi hasil investor', name: r => formatIDR(r.amount || 0) },
+      leaves: { kind: 'absensi', label: 'izin/cuti' },
+      rewards: { kind: 'absensi', label: 'reward', name: r => formatIDR(r.amount || 0) }
+    };
+    const logVal = (k, v) => v == null || v === '' ? '–' : MONEY_FIELDS.has(k) ? formatIDR(Number(v) || 0) : typeof v === 'object' ? '' : String(v);
+    function describeChanges(prev, next) {
+      const out = [];
+      const byId = (list) => new Map((Array.isArray(list) ? list : []).filter(r => r && r.id != null).map(r => [String(r.id), r]));
+      const salesChanged = prev.sales !== next.sales || prev.offlineQueue !== next.offlineQueue;
+      // Sales and their cancellations
+      if (salesChanged) {
+        const before = byId([...(prev.offlineQueue || []), ...(prev.sales || [])]);
+        [...(next.offlineQueue || []), ...(next.sales || [])].forEach(sale => {
+          const old = before.get(String(sale.id));
+          if (!old) out.push({ kind: 'penjualan', action: `${sale.payment_method === 'bayar_nanti' ? 'Mencatat kasbon' : 'Transaksi'} ${sale.receipt_no}`, detail: `${formatIDR(sale.total)} · ${PAYMENT_LABELS[sale.payment_method] || sale.payment_method} · ${sale.customer_name} · ${sale.items.reduce((a, it) => a + it.qty, 0)} item` });
+          else if (old.status !== 'void' && sale.status === 'void') out.push({ kind: 'penjualan', action: `Membatalkan transaksi ${sale.receipt_no}`, detail: `${formatIDR(sale.total)} · alasan: ${sale.void_reason || '-'}` });
+          else if (!old.void_request && sale.void_request) out.push({ kind: 'penjualan', action: `Mengajukan pembatalan ${sale.receipt_no}`, detail: sale.void_request.reason || '' });
+        });
+      }
+      // Cash drawer
+      if (prev.cashSessions !== next.cashSessions) {
+        const before = byId(prev.cashSessions);
+        (next.cashSessions || []).forEach(c => {
+          const old = before.get(String(c.id));
+          if (!old) out.push({ kind: 'kas', action: 'Membuka kasir', detail: `Modal awal ${formatIDR(c.opening_cash || 0)}` });
+          else if (!old.closed_at && c.closed_at) out.push({ kind: 'kas', action: 'Menutup kasir', detail: `Uang di laci ${formatIDR(c.counted_cash ?? 0)}${c.difference ? ` · selisih ${formatIDR(c.difference)}` : ' · sesuai'}` });
+        });
+      }
+      // Attendance
+      if (prev.attendance !== next.attendance) {
+        const before = byId(prev.attendance);
+        const userName = (id) => (next.users || []).find(u => u.id === id)?.name || '';
+        (next.attendance || []).forEach(a => {
+          const old = before.get(String(a.id));
+          if (!old && a.clock_in) out.push({ kind: 'absensi', action: 'Absen datang', detail: `${userName(a.user_id)} · ${fmtTime(a.clock_in)}` });
+          else if (old && !old.clock_out && a.clock_out) out.push({ kind: 'absensi', action: 'Absen pulang', detail: `${userName(a.user_id)} · ${fmtTime(a.clock_out)}` });
+        });
+      }
+      if (prev.overtime !== next.overtime) {
+        const before = byId(prev.overtime);
+        (next.overtime || []).forEach(o => {
+          const old = before.get(String(o.id));
+          if (old && old.status !== o.status && o.status !== 'pending') out.push({ kind: 'absensi', action: o.status === 'approved' ? 'Menyetujui lembur' : 'Menolak lembur', detail: `${(next.users || []).find(u => u.id === o.user_id)?.name || ''} · ${fmtDuration(o.minutes)}` });
+        });
+      }
+      // Debt payments
+      if (prev.debt_payments !== next.debt_payments) {
+        const before = byId(prev.debt_payments);
+        (next.debt_payments || []).forEach(pay => {
+          if (before.has(String(pay.id))) return;
+          const party = pay.kind === 'supplier' ? (next.suppliers || []).find(x => x.id === pay.party_id) : (next.customers || []).find(x => x.id === pay.party_id);
+          out.push({ kind: 'keuangan', action: pay.kind === 'supplier' ? 'Membayar hutang pemasok' : 'Menerima pelunasan kasbon', detail: `${party?.name || ''} · ${formatIDR(pay.amount)}` });
+        });
+      }
+      // Ordinary records: added, changed (with the fields that changed), deleted
+      for (const [coll, cfg] of Object.entries(LOG_COLLS)) {
+        if (prev[coll] === next[coll]) continue;
+        const before = byId(prev[coll]);
+        const nameOf = (r) => (cfg.name ? cfg.name(r) : r.name) || r.id;
+        for (const r of next[coll] || []) {
+          if (!r || r.id == null) continue;
+          const old = before.get(String(r.id));
+          before.delete(String(r.id));
+          if (!old) { out.push({ kind: cfg.kind, action: `Menambah ${cfg.label} ${nameOf(r)}`, detail: '' }); continue; }
+          if (old === r) continue;
+          const keys = [...new Set([...Object.keys(old), ...Object.keys(r)])]
+            .filter(k => !(cfg.quiet || []).includes(k) && JSON.stringify(old[k]) !== JSON.stringify(r[k]));
+          // Stock moved by a sale or its cancellation is already in that line
+          if (coll === 'products' && salesChanged && keys.every(k => k === 'stock')) continue;
+          if (!keys.length) continue;
+          const parts = keys.slice(0, 4).map(k => {
+            const label = LOG_FIELDS[k] || k;
+            const a = logVal(k, old[k]), b = logVal(k, r[k]);
+            return a && b && (a + b).length < 60 ? `${label} ${a} → ${b}` : label;
+          });
+          out.push({ kind: cfg.kind, action: `Mengubah ${cfg.label} ${nameOf(r)}`, detail: parts.join(' · ') + (keys.length > 4 ? ` · +${keys.length - 4} lainnya` : '') });
+        }
+        before.forEach(r => out.push({ kind: cfg.kind, action: `Menghapus ${cfg.label} ${nameOf(r)}`, detail: '' }));
+      }
+      // Settings
+      if (prev.business !== next.business) out.push({ kind: 'pengaturan', action: 'Mengubah pengaturan toko', detail: Object.keys({ ...prev.business, ...next.business }).filter(k => JSON.stringify(prev.business?.[k]) !== JSON.stringify(next.business?.[k])).slice(0, 6).join(', ') });
+      if (prev.permissions !== next.permissions) out.push({ kind: 'pengaturan', action: 'Mengubah hak akses karyawan', detail: '' });
+      if (prev.categories !== next.categories) {
+        const a = new Set(prev.categories || []), b = new Set(next.categories || []);
+        [...b].filter(c => !a.has(c)).forEach(c => out.push({ kind: 'produk', action: `Menambah kategori ${c}`, detail: '' }));
+        [...a].filter(c => !b.has(c)).forEach(c => out.push({ kind: 'produk', action: `Menghapus kategori ${c}`, detail: '' }));
+      }
+      return out;
+    }
+
+    // ---------- License ----------
+    // Remembered per store, so an expired or disabled store stays locked even offline
+    const licenseKey = (tenantId) => cloudKey(tenantId, 'license');
+    const LICENSE_PLAN_LABELS = { trial: 'Trial', bulanan: 'Bulanan', tahunan: 'Tahunan' };
+    function licenseDaysLeft(lic) {
+      if (!lic?.expires_at) return null;
+      return Math.ceil((new Date(lic.expires_at).getTime() - trueNow()) / 86400000);
+    }
+
     // Keeps this device and the server in step.
     // Local data = what the server has + this device's unsent changes (the outbox), so nothing is lost offline.
-    function useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd, readOnly = false }) {
+    function useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd, onLicense, readOnly = false }) {
       const enabled = !!session;
       const tenantId = session?.tenant.id;
       const cb = useRef({});
-      cb.current = { setDb, notify, onSessionUpdate, onSessionEnd, token: session?.token };
+      cb.current = { setDb, notify, onSessionUpdate, onSessionEnd, onLicense, token: session?.token };
       const st = useRef(null);
       if (enabled && !st.current) {
         const outbox = new Map((readLocal(cloudKey(tenantId, 'outbox'), []) || []).map(e => [recKey(e.coll, e.id), e]));
@@ -1487,6 +1653,7 @@
           s.cursor = res.cursor;
           writeLocal(cloudKey(tenantId, 'cursor'), s.cursor);
           learnServerTime(res.now);
+          if (res.license) cb.current.onLicense?.({ ...res.license, blocked: false, message: '' });
           cb.current.onSessionUpdate?.({ token: res.token, user: res.user, tenant: res.tenant });
           if (!res.more) return;
         }
@@ -1506,10 +1673,12 @@
         setStatus(x => ({ ...x, phase: 'syncing' }));
         try {
           await pushAll();
+          if (!readOnly) await flushLogs(tenantId, cb.current.token);
           await pullAll();
           setStatus({ phase: 'synced', pending: s.outbox.size, last: new Date().toISOString(), error: null });
         } catch (e) {
           if (e.status === 401) { s.dead = true; cb.current.onSessionEnd?.(e.message); return; }
+          if (e.status === 403 && e.code === 'license') cb.current.onLicense?.({ blocked: true, message: e.message });
           setStatus(x => ({ ...x, phase: e.status === 0 ? 'offline' : 'error', pending: s.outbox.size, error: e.message }));
           if (e.status === 403 && !s.warned) { s.warned = true; cb.current.notify(e.message, 'warn'); }
         } finally {
@@ -1646,6 +1815,12 @@
       const [mode, setMode] = useState('login');
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState('');
+      // The store's license ended or was switched off: the sign-in screen turns grey and shows the admin's contact
+      const [licenseError, setLicenseError] = useState('');
+      useEffect(() => {
+        document.documentElement.classList.toggle('license-locked', !!licenseError);
+        return () => document.documentElement.classList.remove('license-locked');
+      }, [licenseError]);
       const [forgot, setForgot] = useState(false);
       const [login, setLogin] = useState({ username: readLocal('kasirbosku_last_user', '') || '', password: '' });
       const [act, setAct] = useState({ key: '', store_name: '', owner_name: '', username: '', password: '', password2: '' });
@@ -1669,6 +1844,7 @@
           const s = await apiFetch('/api/login', { method: 'POST', json: { username, password: login.password } });
           onLogin(finish(s, username, login.password));
         } catch (err) {
+          if (err.code === 'license') { setLicenseError(err.message); return; }
           if (err.status !== 0) { setError(err.message); return; }
           // No internet: open the copy this device kept from the last online sign-in
           const r = await vaultOpen(username, login.password);
@@ -1701,6 +1877,8 @@
       };
       const setA = (k) => (e) => setAct(a => ({ ...a, [k]: e.target.value }));
       const actErr = (k) => tried ? actErrors[k] : null;
+
+      if (licenseError) return <LicenseLockedNotice message={licenseError} storeName={login.username} onRetry={() => setLicenseError('')} retryLabel="Kembali" />;
 
       return (
         <div className="flex min-h-full items-center justify-center bg-[#f6f8fc] px-4 py-10">
@@ -1839,7 +2017,7 @@
       // The app's top bar is white; the sign-in screen sits on the light grey page
       useEffect(() => setThemeColor(inApp ? '#ffffff' : '#f6f8fc'), [inApp]);
       if (!CLOUD_API) return <App />;
-      if (!session) return <AuthScreen notice={notice} onLogin={(s) => { writeLocal(SESSION_KEY, s); setNotice(''); setSession(s); }} />;
+      if (!session) return <AuthScreen notice={notice} onLogin={(s) => { writeLocal(SESSION_KEY, s); try { sessionStorage.setItem('kasirbosku_just_signed_in', '1'); } catch {} setNotice(''); setSession(s); }} />;
       // The server ended the session (account removed or deactivated): this device must not open it offline either
       const end = (msg) => {
         if (msg) vaultForget(session.user.username);
@@ -1862,7 +2040,14 @@
     // =====================================================================
     function App({ session = null, onSessionUpdate, onLogout }) {
       const cloud = !!session;
-      const [db, setDb] = useState(() => cloud ? loadCloudDb(session.tenant.id) : loadDb());
+      const [db, setDbRaw] = useState(() => cloud ? loadCloudDb(session.tenant.id) : loadDb());
+      // What this user changed, kept per resulting state; written to the log once React commits that state
+      const pendingLog = useRef(new Map());
+      const setDb = useCallback((update) => setDbRaw(prev => {
+        const next = typeof update === 'function' ? update(prev) : update;
+        if (next !== prev) { try { const lines = describeChanges(prev, next); if (lines.length) pendingLog.current.set(next, lines); } catch { /* the log never blocks a change */ } }
+        return next;
+      }), []);
       const [currentUserId, setCurrentUserId] = useState(cloud ? session.user.id : 'usr-1');
       // Right after the first sign-in the account is known only from the session
       const currentUser = db.users.find(u => u.id === currentUserId) || (cloud ? { ...session.user, status: 'Aktif' } : db.users[0]);
@@ -1890,6 +2075,16 @@
         toastTimer.current = setTimeout(() => setToast(null), 4500);
       }, []);
 
+      const loggedUser = useRef(null);
+      useEffect(() => {
+        const m = pendingLog.current;
+        if (!m.size) return;
+        const seen = new Set(), lines = [];
+        m.forEach(list => list.forEach(l => { const k = l.action + '|' + l.detail; if (!seen.has(k)) { seen.add(k); lines.push(l); } }));
+        m.clear();
+        appendLog(cloud ? session.tenant.id : null, loggedUser.current, lines);
+      }, [db]);
+
       const quotaWarned = useRef(false);
       useEffect(() => {
         try { localStorage.setItem(cloud ? cloudKey(session.tenant.id, 'db') : STORAGE_KEY, JSON.stringify(db)); quotaWarned.current = false; }
@@ -1900,8 +2095,29 @@
         }
       }, [db]);
 
-      const sync = useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd: onLogout, readOnly: session?.user.role === 'investor' });
+      // License: remembered on the device so an expired store stays locked offline too
+      const [license, setLicense] = useState(() => cloud ? (readLocal(licenseKey(session.tenant.id), null) || {}) : {});
+      const onLicense = useCallback((info) => setLicense(cur => {
+        const next = { ...cur, ...info };
+        if (JSON.stringify(next) === JSON.stringify(cur)) return cur;
+        writeLocal(licenseKey(session.tenant.id), next);
+        return next;
+      }), []);
+      const sync = useCloudSync({ session, db, setDb: setDbRaw, notify, onSessionUpdate, onSessionEnd: onLogout, onLicense, readOnly: session?.user.role === 'investor' });
+      const daysLeft = licenseDaysLeft(license);
+      const licenseLocked = cloud && (license.blocked || (daysLeft !== null && daysLeft <= 0 && license.expires_at && new Date(license.expires_at).getTime() <= trueNow()));
+      useEffect(() => {
+        document.documentElement.classList.toggle('license-locked', !!licenseLocked);
+        return () => document.documentElement.classList.remove('license-locked');
+      }, [licenseLocked]);
       const [confirmLogout, setConfirmLogout] = useState(false);
+      useEffect(() => {
+        if (cloud && sessionStorage.getItem('kasirbosku_just_signed_in')) {
+          sessionStorage.removeItem('kasirbosku_just_signed_in');
+          appendLog(session.tenant.id, { id: session.user.id, name: session.user.name, role: session.user.role }, [{ kind: 'akun', action: 'Masuk ke aplikasi', detail: navigator.userAgent.includes('Android') ? 'Android' : navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad') ? 'iOS' : 'Komputer' }]);
+        }
+      }, []);
+      const logout = () => { if (cloud) appendLog(session.tenant.id, { id: currentUser.id, name: currentUser.name, role: currentUser.role }, [{ kind: 'akun', action: 'Keluar dari aplikasi', detail: '' }]); onLogout(); };
 
       const hasPermission = (k) => isOwner || (isInvestor ? k === 'can_view_finance' : !!db.permissions[k]);
       const canAccess = (item) => isInvestor ? INVESTOR_TABS.has(item.id) : (!item.ownerOnly || isOwner) && (!item.perm || hasPermission(item.perm));
@@ -2060,7 +2276,9 @@
       const pendingOt = db.overtime.filter(o => o.status === 'pending');
       const pendingVoids = allSalesOf(db).filter(s => s.status !== 'void' && s.void_request?.status === 'pending');
       const myNotifs = isOwner ? [] : (db.staff_notifications || []).filter(n => n.user_id === currentUser.id).slice(0, 15);
+      const licenseSoon = cloud && !licenseLocked && daysLeft !== null && daysLeft <= (license.plan === 'trial' ? 3 : 7);
       const notifications = [
+        ...(licenseSoon ? [{ id: 'lic', icon: 'alert', tone: 'rose', title: 'Lisensi segera berakhir', msg: `Lisensi ${LICENSE_PLAN_LABELS[license.plan] || ''} berakhir ${daysLeft <= 1 ? 'besok' : `${daysLeft} hari lagi`} (${fmtDateShort(license.expires_at)}). Hubungi admin untuk perpanjangan.` }] : []),
         ...myNotifs,
         ...lowStock.map(p => ({ id: 'ls-' + p.id, icon: 'alert', tone: 'amber', title: p.stock <= 0 ? 'Stok habis' : 'Stok menipis', msg: `${p.name} tersisa ${p.stock} ${p.unit}.`, go: 'products' })),
         ...(isOwner && pendingVoids.length ? [{ id: 'void', icon: 'ban', tone: 'rose', title: 'Pengajuan pembatalan', msg: `${pendingVoids.length} transaksi menunggu persetujuan pembatalan.`, go: 'sales_report' }] : []),
@@ -2095,6 +2313,7 @@
       const pageSetDb = isInvestor ? () => notify('Akun investor hanya bisa melihat data.', 'info') : setDb;
       const pageProps = { db, setDb: pageSetDb, notify, currentUser, hasPermission, isOwner, checkUsername };
       const greetingName = currentUser.name.replace(/^(Hj?\.)\s*/, '').split(' ')[0];
+      loggedUser.current = { id: currentUser.id, name: currentUser.name, role: currentUser.role };
 
       // First sign-in on this device: wait for the store's data before showing the app
       if (cloud && db.users.length === 0) {
@@ -2118,13 +2337,14 @@
 
       return (
         <div className="relative flex h-full overflow-hidden bg-[#f6f8fc] text-slate-900">
+          {licenseLocked && <LicenseLockedNotice message={license.message} storeName={db.business.name || session.tenant.name} storeCode={session.tenant.code} checking={sync.status.phase === 'syncing'} onRetry={() => sync.syncNow()} onLogout={logout} />}
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:shadow-lg">Lewati ke konten</a>
 
           {codeAsk && <AttendanceCodePrompt onDone={(c) => { codeAsk.resolve(c); setCodeAsk(null); }} />}
 
           {confirmLogout && (
             <Modal title="Keluar dari akun?" desc={`${sync.status.pending} perubahan belum terkirim ke server.`} onClose={() => setConfirmLogout(false)}
-              footer={<><Btn variant="secondary" onClick={() => setConfirmLogout(false)}>Batal</Btn><Btn variant="danger" onClick={() => onLogout()}>Tetap keluar</Btn></>}>
+              footer={<><Btn variant="secondary" onClick={() => setConfirmLogout(false)}>Batal</Btn><Btn variant="danger" onClick={logout}>Tetap keluar</Btn></>}>
               <p className="text-sm text-slate-600">Perubahan itu tetap tersimpan di perangkat ini dan terkirim saat ada yang masuk lagi di perangkat ini dengan internet.</p>
             </Modal>
           )}
@@ -2200,7 +2420,7 @@
                     <p className="truncate text-sm font-semibold leading-tight">{currentUser.name}</p>
                     <p className="text-xs leading-tight text-brand-100">{ROLE_LABELS[currentUser.role]}</p>
                   </div>
-                  <button type="button" aria-label="Keluar" title="Keluar" onClick={() => sync.status.pending ? setConfirmLogout(true) : onLogout()}
+                  <button type="button" aria-label="Keluar" title="Keluar" onClick={() => sync.status.pending ? setConfirmLogout(true) : logout()}
                     className="inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-brand-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
                     <SvgIcon name="logout" className="h-5 w-5" />
                   </button>
@@ -2254,7 +2474,7 @@
                     ? <Btn size="sm" icon="login" onClick={clockIn} disabled={clocking} className="min-h-[40px]" aria-label="Absen masuk"><span className="hidden sm:inline">Absen masuk</span></Btn>
                     : !myAttendance.clock_out
                       ? <Btn size="sm" variant="secondary" icon="logout" onClick={clockOut} disabled={clocking} className="min-h-[40px]" aria-label={`Absen pulang. Masuk pukul ${fmtTime(myAttendance.clock_in)}`}><span className="hidden sm:inline">Absen pulang</span></Btn>
-                      : <Badge tone="green" className="hidden sm:inline-flex">Sudah absen</Badge>
+                      : <span className="hidden min-h-[40px] items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-800 sm:inline-flex" title={`Datang ${fmtTime(myAttendance.clock_in)} · pulang ${fmtTime(myAttendance.clock_out)}`}><SvgIcon name="check" className="h-4 w-4" />Sudah absen</span>
                 )}
 
                 {cloud ? <SyncChip status={sync.status} onClick={syncClick} /> : (
@@ -2318,6 +2538,7 @@
             <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
               {/* Keyed by user so page-local state (e.g. owner-only tabs) never leaks across a user switch */}
               <div key={currentUserId} className="mx-auto max-w-[1600px] space-y-5 p-4 sm:p-6">
+                {licenseSoon && isOwner && <LicenseReminder days={daysLeft} plan={license.plan} expiresAt={license.expires_at} storeName={db.business.name} storeCode={session.tenant.code} />}
                 {activeTab === 'pos' && !isInvestor && <POSMainView {...pageProps} cart={cart} setCart={setCart} isOfflineMode={isOfflineMode} />}
                 {activeTab === 'dashboard' && (isOwner || isInvestor) && <DashboardOwnerView db={db} go={go} now={now} />}
                 {activeTab === 'sales_report' && <SalesReportModule {...pageProps} />}
@@ -2332,6 +2553,7 @@
                 {activeTab === 'permissions' && isOwner && <PermissionsMatrixModule {...pageProps} />}
                 {activeTab === 'investors' && (isOwner || isInvestor) && <InvestorsModule {...pageProps} />}
                 {activeTab === 'settings' && isOwner && <SettingsModule {...pageProps} />}
+                {activeTab === 'activity' && isOwner && <ActivityLogModule db={db} session={session} />}
               </div>
             </main>
 
@@ -2476,7 +2698,7 @@
             <div className="flex justify-between"><span>Tunai</span><span>{formatIDR(sale.cash_paid)}</span></div>
             <div className="flex justify-between"><span>Kembali</span><span>{formatIDR(sale.cash_paid - sale.total)}</span></div>
           </>}
-          <p className="mt-1">Bayar: {PAYMENT_LABELS[sale.payment_method]}</p>
+          <p className="mt-1">Bayar: <span className={sale.kasbon_status === 'paid' ? 'font-bold' : undefined}>{paymentLabel(sale)}</span></p>
           {r.footer && <p className="mt-2 text-center">{r.footer}</p>}
           {r.show_brand && <p className="mt-2 text-center text-[10px] text-slate-500">Dibuat dengan {APP_NAME}</p>}
         </div>
@@ -2540,7 +2762,7 @@
       if (r.show_tax && sale.tax > 0) row('Pajak', money(sale.tax));
       row('TOTAL', money(sale.total), { bold: true });
       if (sale.cash_paid != null) { row('Tunai', money(sale.cash_paid)); row('Kembali', money(sale.cash_paid - sale.total)); }
-      add(`Bayar: ${PAYMENT_LABELS[sale.payment_method]}`);
+      add(`Bayar: ${paymentLabel(sale)}`);
       if (r.footer) { add(''); center(r.footer); }
       if (r.show_brand) { add(''); center(`Dibuat dengan ${APP_NAME}`); }
       return L;
@@ -2908,12 +3130,137 @@
               <SvgIcon name="check" className="h-8 w-8 flex-shrink-0 text-brand-700" />
               <div>
                 <p className="text-xl font-bold text-brand-900 tabular">{formatIDR(sale.total)}</p>
-                <p className="text-sm text-brand-800">{PAYMENT_LABELS[sale.payment_method]}{sale.sync_status === 'pending_sync' ? ' · menunggu sinkron' : ''}</p>
+                <p className="text-sm text-brand-800">{paymentLabel(sale)}{sale.sync_status === 'pending_sync' ? ' · menunggu sinkron' : ''}</p>
               </div>
             </div>
           )}
           <ReceiptPaper sale={sale} business={business} />
         </Modal>
+      );
+    }
+
+    // =====================================================================
+    // LICENSE NOTICES
+    // =====================================================================
+    const adminWaLink = (text) => `https://wa.me/${CS_WA}?text=${encodeURIComponent(text)}`;
+
+    // Shown over the greyed-out app when the license has ended or was switched off. Drawn outside #root so it keeps its colour.
+    function LicenseLockedNotice({ message, storeName, storeCode, checking, onRetry, onLogout, retryLabel }) {
+      const titleId = useId();
+      return ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/70 p-4" role="alertdialog" aria-modal="true" aria-labelledby={titleId}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 animate-pop-in">
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-50 text-rose-700"><SvgIcon name="lock" className="h-6 w-6" /></span>
+            <h2 id={titleId} className="mt-4 text-xl font-semibold tracking-tight text-slate-900">Lisensi tidak aktif</h2>
+            <p className="mt-1.5 text-sm text-slate-600">{message || 'Masa lisensi toko ini sudah berakhir.'} Data toko tetap aman dan bisa dipakai lagi setelah lisensi diperpanjang.</p>
+            <a href={adminWaLink(retryLabel ? `Halo admin KasirBosku, saya mau memperpanjang lisensi.\nID login: ${storeName}` : `Halo admin KasirBosku, saya mau memperpanjang lisensi.\nToko: ${storeName}\nKode toko: ${storeCode}`)} target="_blank" rel="noreferrer"
+              className={cx('mt-5 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700', focusRing)}>
+              <SvgIcon name="chat" className="h-4 w-4" />Hubungi admin lewat WhatsApp
+            </a>
+            {retryLabel
+              ? <Btn variant="secondary" className="mt-2 w-full" onClick={onRetry}>{retryLabel}</Btn>
+              : <div className="mt-2 grid grid-cols-2 gap-2">
+                  <Btn variant="secondary" icon="refresh" onClick={onRetry} disabled={checking}>{checking ? 'Memeriksa…' : 'Periksa lagi'}</Btn>
+                  <Btn variant="ghost" icon="logout" onClick={onLogout}>Keluar</Btn>
+                </div>}
+          </div>
+        </div>,
+        document.body
+      );
+    }
+
+    // A slim bar for the Bos in the last days of the license; hidden for the rest of the day once closed
+    function LicenseReminder({ days, plan, expiresAt, storeName, storeCode }) {
+      const key = `kasirbosku_lic_dismiss_${dateKey()}`;
+      const [hidden, setHidden] = useState(() => !!readLocal(key, false));
+      if (hidden) return null;
+      return (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-900" role="status">
+          <SvgIcon name="alert" className="h-5 w-5 flex-shrink-0 text-rose-600" />
+          <p className="min-w-0 flex-1"><span className="font-semibold">Lisensi {LICENSE_PLAN_LABELS[plan] || ''} berakhir {days <= 1 ? 'besok' : `${days} hari lagi`}</span> · {fmtDateShort(expiresAt)}. Perpanjang supaya kasir tetap bisa dipakai.</p>
+          <a href={adminWaLink(`Halo admin KasirBosku, saya mau memperpanjang lisensi.\nToko: ${storeName}\nKode toko: ${storeCode}`)} target="_blank" rel="noreferrer"
+            className={cx('inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700', focusRing)}>
+            <SvgIcon name="chat" className="h-4 w-4" />Perpanjang
+          </a>
+          <IconBtn icon="x" label="Sembunyikan sampai besok" iconClass="h-4 w-4" className="h-9 w-9 text-rose-700 hover:bg-rose-100" onClick={() => { writeLocal(key, true); setHidden(true); }} />
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // ACTIVITY LOG (BOS)
+    // =====================================================================
+    const LOG_KINDS = { penjualan: 'Penjualan', kas: 'Buka/tutup kasir', produk: 'Produk & stok', pelanggan: 'Pelanggan', absensi: 'Absensi', karyawan: 'Karyawan', keuangan: 'Keuangan', pembelian: 'Pembelian', promo: 'Promo', pengaturan: 'Pengaturan', akun: 'Masuk/keluar' };
+    const LOG_TONES = { penjualan: 'bg-emerald-50 text-emerald-700', kas: 'bg-amber-50 text-amber-700', produk: 'bg-brand-50 text-brand-700', absensi: 'bg-violet-50 text-violet-700', keuangan: 'bg-rose-50 text-rose-700', akun: 'bg-slate-100 text-slate-600' };
+    const LOG_ICONS = { penjualan: 'receipt', kas: 'cash', produk: 'products', pelanggan: 'customers', absensi: 'clock', karyawan: 'users', keuangan: 'finance', pembelian: 'purchases', promo: 'incentives', pengaturan: 'settings', akun: 'login' };
+
+    function ActivityLogModule({ db, session }) {
+      const cloud = !!session;
+      const [logs, setLogs] = useState([]);
+      const [more, setMore] = useState(false);
+      const [loading, setLoading] = useState(cloud);
+      const [error, setError] = useState('');
+      const [user, setUser] = useState('');
+      const [kind, setKind] = useState('');
+      const [search, setSearch] = useState('');
+      // Entries still on this device (not sent yet, or the whole log in demo mode)
+      const local = (readLocal(logQueueKey(cloud ? session.tenant.id : null), []) || []).slice().reverse();
+
+      const load = async (before) => {
+        if (!cloud) return;
+        setLoading(true); setError('');
+        try {
+          const qs = new URLSearchParams({ limit: '100', ...(before ? { before } : {}), ...(user ? { user } : {}), ...(kind ? { kind } : {}) });
+          const r = await apiFetch(`/api/logs?${qs}`, { token: session.token });
+          setLogs(prev => before ? [...prev, ...r.logs] : r.logs);
+          setMore(r.more);
+        } catch (e) { setError(e.status === 0 ? 'Log di server butuh internet. Yang tampil hanya catatan di perangkat ini.' : e.message); }
+        finally { setLoading(false); }
+      };
+      useEffect(() => { load(); }, [user, kind]);
+
+      const q = search.trim().toLowerCase();
+      const pendingIds = new Set(local.map(l => l.id));
+      const all = [...local.filter(l => (!user || l.user_id === user) && (!kind || l.kind === kind)), ...logs.filter(l => !pendingIds.has(l.id))]
+        .filter(l => !q || `${l.action} ${l.detail} ${l.user_name}`.toLowerCase().includes(q))
+        .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      const groups = [];
+      all.forEach(l => { const d = dateKey(new Date(l.at)); const g = groups[groups.length - 1]; if (g && g.day === d) g.items.push(l); else groups.push({ day: d, items: [l] }); });
+
+      return (
+        <div className="space-y-5">
+          <PageHeader title="Log Aktivitas" desc="Riwayat siapa melakukan apa dan kapan: transaksi, perubahan produk, kasir, absensi, dan pengaturan."
+            actions={cloud && <Btn variant="secondary" icon="refresh" onClick={() => load()} disabled={loading}>{loading ? 'Memuat…' : 'Muat ulang'}</Btn>} />
+          <Card className="p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Field label="Orang"><select value={user} onChange={e => setUser(e.target.value)} className={inputCls}><option value="">Semua orang</option>{db.users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
+              <Field label="Jenis"><select value={kind} onChange={e => setKind(e.target.value)} className={inputCls}><option value="">Semua jenis</option>{Object.entries(LOG_KINDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+              <Field label="Cari"><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="cth. INV-, Es Teh, harga" className={inputCls} /></Field>
+            </div>
+            {error && <p className="mt-3 text-sm font-medium text-amber-700" role="status">{error}</p>}
+          </Card>
+          {all.length === 0 ? (
+            <Card className="p-4"><EmptyState icon="history" title={loading ? 'Memuat log…' : 'Belum ada aktivitas'} desc={loading ? '' : 'Aktivitas baru tercatat otomatis mulai sekarang.'} /></Card>
+          ) : groups.map(g => (
+            <Card key={g.day}>
+              <h3 className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900">{fmtDateLong(new Date(g.day + 'T12:00:00'))}</h3>
+              <ul className="divide-y divide-slate-100">
+                {g.items.map(l => (
+                  <li key={l.id} className="flex gap-3 px-4 py-3">
+                    <span className={cx('mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg', LOG_TONES[l.kind] || 'bg-slate-100 text-slate-600')}><SvgIcon name={LOG_ICONS[l.kind] || 'info'} className="h-4 w-4" /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900">{l.action}</p>
+                      {l.detail && <p className="mt-0.5 break-words text-sm text-slate-600">{l.detail}</p>}
+                      <p className="mt-0.5 text-xs text-slate-500">{l.user_name} · {ROLE_LABELS[l.role] || l.role}{pendingIds.has(l.id) && cloud ? ' · belum terkirim' : ''}</p>
+                    </div>
+                    <time className="flex-shrink-0 text-xs font-medium text-slate-500 tabular" dateTime={l.at}>{fmtTime(l.at)}</time>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ))}
+          {more && <div className="flex justify-center"><Btn variant="secondary" onClick={() => load(logs[logs.length - 1]?.at)} disabled={loading}>{loading ? 'Memuat…' : 'Muat lebih lama'}</Btn></div>}
+        </div>
       );
     }
 
@@ -3210,7 +3557,7 @@
       const bestSellers = useMemo(() => {
         const since = addDays(dateKey(), -29);
         const qty = {};
-        allSalesOf(db).forEach(s => { if (isValidSale(s) && saleDay(s) >= since) s.items.forEach(it => { qty[it.id] = (qty[it.id] || 0) + it.qty; }); });
+        allSalesOf(db).forEach(s => { if (isValidSale(s) && saleDay(s) >= since) s.items.forEach(it => { const id = productIdOf(it); qty[id] = (qty[id] || 0) + it.qty; }); });
         const best = {};
         db.products.forEach(p => { const n = qty[p.id] || 0; if (n > 0 && (!best[p.category] || n > best[p.category].n)) best[p.category] = { id: p.id, n }; });
         return new Set(Object.values(best).map(b => b.id));
@@ -3219,8 +3566,10 @@
       const selectedCustomer = db.customers.find(c => c.id === selectedCustomerId) || db.customers[0];
       const isWalkIn = !selectedCustomer || selectedCustomer.id === 'cust-1';
 
-      const stockOf = (id) => db.products.find(p => p.id === id)?.stock ?? 0;
-      const qtyInCart = (id) => cart.find(c => c.id === id)?.qty || 0;
+      const stockOf = (id) => db.products.find(p => p.id === productIdOf({ id }))?.stock ?? 0;
+      // Units of one product in the cart, over all its variants
+      const qtyInCart = (pid) => cart.filter(c => productIdOf(c) === pid).reduce((a, c) => a + c.qty, 0);
+      const [variantPick, setVariantPick] = useState(null);
 
       const today = dateKey();
       const todaySales = allSalesOf(db).filter(s => isValidSale(s) && saleDay(s) === today);
@@ -3232,19 +3581,25 @@
         (selectedCategory === 'Semua' || p.category === selectedCategory) &&
         (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)));
 
-      const addToCart = (product) => {
+      const addToCart = (product, variant) => {
+        if (product.variants?.length && !variant) { setVariantPick(product); return; }
         if (qtyInCart(product.id) >= product.stock) {
           notify(product.stock <= 0 ? `Stok ${product.name} habis.` : `Stok ${product.name} hanya ${product.stock}.`, 'warn');
           return;
         }
         const info = priceInfo(product, promos);
-        setCart(prev => prev.some(c => c.id === product.id)
-          ? prev.map(c => c.id === product.id ? { ...c, qty: c.qty + 1 } : c)
-          : [...prev, { id: product.id, name: product.name, qty: 1, sell_price: info.price, original_price: info.original }]);
+        const line = variant
+          ? { id: `${product.id}::${variant.id}`, product_id: product.id, variant_id: variant.id, name: `${product.name} · ${variant.name}`, qty: 1, sell_price: Number(variant.price) || info.price, original_price: Number(variant.price) || info.original }
+          : { id: product.id, name: product.name, qty: 1, sell_price: info.price, original_price: info.original };
+        setCart(prev => prev.some(c => c.id === line.id)
+          ? prev.map(c => c.id === line.id ? { ...c, qty: c.qty + 1 } : c)
+          : [...prev, line]);
       };
+      // The minus on a catalog card takes from the last line of that product
+      const removeOneOf = (pid) => { const line = [...cart].reverse().find(c => productIdOf(c) === pid); if (line) updateQty(line.id, -1); };
 
       const updateQty = (id, delta) => {
-        if (delta > 0 && qtyInCart(id) >= stockOf(id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
+        if (delta > 0 && qtyInCart(productIdOf({ id })) >= stockOf(id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
         setCart(prev => prev.map(c => c.id === id ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
       };
 
@@ -3283,8 +3638,8 @@
       const commitSale = (sale, { asDebt } = {}) => {
         setDb(prev => {
           const products = prev.products.map(p => {
-            const it = cart.find(c => c.id === p.id);
-            return it ? { ...p, stock: Math.max(0, p.stock - it.qty) } : p;
+            const qty = cart.filter(c => productIdOf(c) === p.id).reduce((a, c) => a + c.qty, 0);
+            return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
           });
           const customers = prev.customers.map(c => {
             if (c.id !== selectedCustomerId || c.id === 'cust-1') return c;
@@ -3341,7 +3696,7 @@
         if (openAfterSession) { setOpenAfterSession(false); setPaymentModalOpen(true); }
       };
 
-      const panelHeight = openSession ? 'md:h-[calc(100vh-8rem)] md:min-h-[520px]' : 'md:h-[calc(100vh-13rem)] md:min-h-[520px]';
+      const panelHeight = 'md:h-[calc(100vh-8rem)] md:min-h-[520px]';
       const itemCount = cart.reduce((a, c) => a + c.qty, 0);
 
       const renderItem = (prod) => {
@@ -3349,7 +3704,7 @@
         const out = prod.stock <= 0;
         const low = !out && prod.stock <= prod.min_stock;
         const info = priceInfo(prod, promos);
-        const controls = <MenuControls name={prod.name} inCart={inCart} disabled={out || inCart >= prod.stock} onAdd={() => addToCart(prod)} onRemove={() => updateQty(prod.id, -1)} />;
+        const controls = <MenuControls name={prod.name} inCart={inCart} disabled={out || inCart >= prod.stock} onAdd={() => addToCart(prod)} onRemove={() => removeOneOf(prod.id)} />;
         const isBest = bestSellers.has(prod.id);
         const addLabel = `Tambah ${prod.name}${isBest ? ' (terlaris)' : ''}, ${formatIDR(info.price)}${info.discounted ? `, diskon ${info.pct}%` : ''}, stok ${prod.stock}`;
 
@@ -3371,7 +3726,7 @@
 
         return (
           <li key={prod.id}>
-            <div className={cx('flex h-full flex-col rounded-2xl border bg-white p-2 transition hover:shadow-md', inCart ? 'border-brand-500 ring-1 ring-brand-500' : 'border-slate-200', out && 'opacity-60')}>
+            <div className={cx('flex h-full flex-col rounded-2xl border bg-white p-2 transition-colors', inCart ? 'border-brand-600 shadow-[inset_0_0_0_1px_#1440c8]' : 'border-slate-200 hover:border-slate-300', out && 'opacity-60')}>
               <button type="button" onClick={() => addToCart(prod)} disabled={out} aria-label={addLabel} className={cx('group block w-full rounded-xl text-left disabled:cursor-not-allowed', focusRing)}>
                 <div className="relative aspect-square w-full overflow-hidden rounded-xl">
                   <ProductThumb product={prod} textClass="text-3xl" className="h-full w-full transition duration-300 group-hover:scale-105 motion-reduce:transform-none" />
@@ -3381,6 +3736,7 @@
                   {isBest && <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-sun-400 px-1.5 py-0.5 text-xs font-bold text-slate-900 shadow-sm"><StarIcon className="h-3.5 w-3.5" />Terlaris</span>}
                 </div>
                 <p className="mt-2 line-clamp-2 px-1 text-sm font-semibold leading-5 text-slate-900">{prod.name}</p>
+                {prod.variants?.length > 0 && <p className="px-1 text-xs text-slate-500">{prod.variants.length} varian</p>}
               </button>
               {/* Wraps so the price is never truncated when the minus control appears */}
               <div className="mt-auto flex flex-wrap items-end justify-between gap-x-1 gap-y-1.5 px-1 pt-2">
@@ -3398,20 +3754,6 @@
             <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-sm text-amber-900">
               <SvgIcon name="wifiOff" className="mt-0.5 h-5 w-5 flex-shrink-0" />
               <p><span className="font-semibold">Mode offline.</span> Transaksi disimpan di perangkat dan disinkronkan saat kembali online.</p>
-            </div>
-          )}
-
-          {/* Only the "not open yet" reminder sits above the catalog; once open, the details live in the cart panel's "Kas & Riwayat" tab */}
-          {!openSession && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-3.5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><SvgIcon name="lock" className="h-5 w-5" /></span>
-                <div className="text-sm">
-                  <p className="font-semibold text-amber-900">Kasir belum dibuka</p>
-                  <p className="text-amber-800">Catat modal awal di laci sebelum menerima pembayaran.</p>
-                </div>
-              </div>
-              <Btn icon="unlock" onClick={() => { setOpenAfterSession(false); setSessionModal('open'); }}>Buka kasir</Btn>
             </div>
           )}
 
@@ -3515,7 +3857,7 @@
                             <div className="min-w-0">
                               <p className={cx('truncate font-mono text-xs font-semibold text-slate-900', s.status === 'void' && 'line-through text-slate-400')}>{s.receipt_no}</p>
                               <p className="truncate text-xs text-slate-500">
-                                {saleDay(s) === today ? fmtTime(s.date) : fmtDateTime(s.date)} · {PAYMENT_LABELS[s.payment_method]} · {s.customer_name} · {s.cashier_id === currentUser.id ? 'Anda' : s.cashier}
+                                {saleDay(s) === today ? fmtTime(s.date) : fmtDateTime(s.date)} · {paymentLabel(withKasbonStatus(s, db))} · {s.customer_name} · {s.cashier_id === currentUser.id ? 'Anda' : s.cashier}
                               </p>
                               {s.status === 'void' && <Badge tone="rose" className="mt-0.5">Dibatalkan</Badge>}
                             </div>
@@ -3532,17 +3874,18 @@
               ) : <>
               <div className="mt-3 flex items-center gap-2">
                 <label htmlFor="pos-customer" className="sr-only">Pelanggan</label>
-                <select id="pos-customer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'h-11 flex-1 cursor-pointer')}>
+                <select id="pos-customer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'h-10 !min-h-[40px] min-w-0 flex-1 cursor-pointer')}>
                   {db.customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.debt > 0 ? ` · kasbon ${formatIDR(c.debt)}` : ''}</option>)}
                 </select>
-                <IconBtn icon="userPlus" label="Tambah pelanggan baru" onClick={() => setQuickCustomer({ name: '', phone: '' })} className="border border-slate-300" />
+                <IconBtn icon="userPlus" label="Tambah pelanggan baru" iconClass="h-[18px] w-[18px]" onClick={() => setQuickCustomer({ name: '', phone: '' })} className="h-10 w-10 border border-slate-300" />
+                {openSession && <Btn variant="dangerSoft" size="sm" icon="lock" className="h-10 flex-shrink-0" onClick={() => setSessionModal('close')}>Tutup kasir</Btn>}
               </div>
 
               <div className="mt-3 min-h-[120px] flex-1 overflow-y-auto md:pr-1">
                 {cart.length === 0 ? <EmptyState icon="cart" title="Keranjang masih kosong" desc="Ketuk menu di katalog untuk menambahkannya." /> : (
                   <ul className="space-y-2">
                     {cart.map(item => {
-                      const product = db.products.find(p => p.id === item.id) || item;
+                      const product = db.products.find(p => p.id === productIdOf(item)) || item;
                       return (
                         <li key={item.id} className="flex gap-3 rounded-xl border border-slate-200 p-2">
                           <ProductThumb product={product} className="h-12 w-12 flex-shrink-0 rounded-lg" textClass="text-sm" />
@@ -3558,7 +3901,7 @@
                               <IconBtn icon="trash" label={`Hapus ${item.name}`} iconClass="w-4 h-4" onClick={() => updateQty(item.id, -item.qty)} className="-mr-1 -mt-1 h-9 w-9 text-slate-400 hover:bg-rose-50 hover:text-rose-600" />
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-2">
-                              <QtyStepper qty={item.qty} name={item.name} onDec={() => updateQty(item.id, -1)} onInc={() => updateQty(item.id, 1)} incDisabled={item.qty >= stockOf(item.id)} />
+                              <QtyStepper qty={item.qty} name={item.name} onDec={() => updateQty(item.id, -1)} onInc={() => updateQty(item.id, 1)} incDisabled={qtyInCart(productIdOf(item)) >= stockOf(item.id)} />
                               <span className="text-sm font-bold text-slate-900 tabular">{formatIDR(item.sell_price * item.qty)}</span>
                             </div>
                           </div>
@@ -3630,6 +3973,14 @@
                 </div>
               </dl>
 
+              {!openSession && (
+                <button type="button" onClick={() => { setOpenAfterSession(false); setSessionModal('open'); }}
+                  className={cx('mt-3 flex min-h-[40px] w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-left text-xs text-amber-900 transition-colors hover:bg-amber-100', focusRing)}>
+                  <SvgIcon name="lock" className="h-4 w-4 flex-shrink-0" />
+                  <span className="min-w-0 flex-1 font-semibold">Kasir belum dibuka</span>
+                  <span className="flex flex-shrink-0 items-center gap-1 font-semibold text-brand-700"><SvgIcon name="unlock" className="h-4 w-4" />Buka kasir</span>
+                </button>
+              )}
               <div className="mt-3 flex gap-2">
                 <Btn variant="secondary" className="flex-1" disabled={!cart.length || isWalkIn || discountInvalid} onClick={handleBayarNanti} aria-describedby={isWalkIn ? 'kasbon-hint' : undefined}>Bayar Nanti</Btn>
                 <Btn variant="success" className="flex-[2]" disabled={!cart.length || discountInvalid} onClick={openPayment}>Bayar {formatIDR(grandTotal)}</Btn>
@@ -3646,6 +3997,22 @@
               {cart.length ? `Lihat keranjang · ${itemCount} item · ${formatIDR(grandTotal)}` : 'Lihat keranjang · Kas & Riwayat'}
             </Btn>
           </div>
+
+          {variantPick && (
+            <Modal title={`Pilih varian ${variantPick.name}`} desc={`Stok ${variantPick.stock} ${variantPick.unit}`} size="sm" onClose={() => setVariantPick(null)}>
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {variantPick.variants.map(v => (
+                  <li key={v.id}>
+                    <button type="button" onClick={() => { addToCart(variantPick, v); setVariantPick(null); }}
+                      className={cx('flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 text-left transition-colors hover:border-brand-600 hover:bg-brand-50', focusRing)}>
+                      <span className="text-sm font-semibold text-slate-900">{v.name}</span>
+                      <span className="text-sm font-semibold text-brand-800 tabular">{formatIDR(Number(v.price) || priceInfo(variantPick, promos).price)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Modal>
+          )}
 
           {paymentModalOpen && (
             <Modal title="Pembayaran" desc={`Total tagihan ${formatIDR(grandTotal)}`} onClose={() => setPaymentModalOpen(false)}
@@ -3713,7 +4080,7 @@
           )}
 
           {receipt && <ReceiptModal sale={receipt} business={db.business} customers={db.customers} onClose={() => setReceipt(null)} />}
-          {reprint && <ReceiptModal sale={reprint} business={db.business} customers={db.customers} title={`Cetak ulang ${reprint.receipt_no}`} onClose={() => setReprint(null)} />}
+          {reprint && <ReceiptModal sale={withKasbonStatus(reprint, db)} business={db.business} customers={db.customers} title={`Cetak ulang ${reprint.receipt_no}`} onClose={() => setReprint(null)} />}
 
           {sessionModal === 'open' && (
             <OpenSessionModal db={db} setDb={setDb} notify={notify} currentUser={currentUser}
@@ -3896,6 +4263,7 @@
         return { u, count: list.length, total: list.reduce((a, s) => a + s.total, 0) };
       }).filter(x => x.count);
 
+      const kasbonStatus = useMemo(() => kasbonStatusMap(db), [db.sales, db.offlineQueue, db.customers]);
       const qs = search.trim().toLowerCase();
       const txList = sortBy((showVoid ? scoped : valid)
         .filter(s => !qs || s.receipt_no.toLowerCase().includes(qs) || s.customer_name.toLowerCase().includes(qs) || s.items.some(it => it.name.toLowerCase().includes(qs))),
@@ -3920,9 +4288,9 @@
             ...prev,
             sales: mark(prev.sales),
             offlineQueue: mark(prev.offlineQueue),
-            products: prev.products.map(p => { const it = sale.items.find(i => i.id === p.id); return it ? { ...p, stock: p.stock + it.qty } : p; }),
+            products: prev.products.map(p => { const qty = sale.items.filter(i => productIdOf(i) === p.id).reduce((a, i) => a + i.qty, 0); return qty ? { ...p, stock: p.stock + qty } : p; }),
             customers: sale.payment_method === 'bayar_nanti' ? prev.customers.map(c => (c.id === sale.customer_id || c.name === sale.customer_name) ? { ...c, debt: Math.max(0, c.debt - sale.total) } : c) : prev.customers,
-            stockHistory: [...sale.items.map(it => ({ id: generateId('SH'), date: stamp, sku: prev.products.find(p => p.id === it.id)?.sku || '-', name: it.name, qtyChange: `+${it.qty}`, type: `Pembatalan ${sale.receipt_no}`, user: currentUser.name })), ...prev.stockHistory]
+            stockHistory: [...sale.items.map(it => ({ id: generateId('SH'), date: stamp, sku: prev.products.find(p => p.id === productIdOf(it))?.sku || '-', name: it.name, qtyChange: `+${it.qty}`, type: `Pembatalan ${sale.receipt_no}`, user: currentUser.name })), ...prev.stockHistory]
           };
         });
         // Tell the cashier whose sale it was (or who asked for the cancellation)
@@ -4131,7 +4499,7 @@
                       </td>
                       <td className="px-4 py-2.5">{s.cashier}</td>
                       <td className="px-4 py-2.5">{s.customer_name}</td>
-                      <td className="px-4 py-2.5"><Badge tone={s.payment_method === 'bayar_nanti' ? 'amber' : 'slate'}>{PAYMENT_LABELS[s.payment_method]}</Badge></td>
+                      <td className="px-4 py-2.5">{(() => { const k = s.payment_method === 'bayar_nanti' ? kasbonStatus.get(s.id) : null; return <Badge tone={k === 'paid' ? 'green' : s.payment_method === 'bayar_nanti' ? 'amber' : 'slate'}>{s.payment_method === 'bayar_nanti' ? (k === 'paid' ? 'Kasbon · lunas' : k === 'partial' ? 'Kasbon · sebagian' : 'Kasbon') : PAYMENT_LABELS[s.payment_method]}</Badge>; })()}</td>
                       <td className="px-4 py-2.5 text-right font-semibold tabular">{formatIDR(s.total)}</td>
                       <td className="px-4 py-2.5 text-right"><Btn variant="ghost" size="sm" onClick={() => setDetail(s)} aria-label={`Detail ${s.receipt_no}`}>Detail</Btn></td>
                     </tr>
@@ -4214,7 +4582,7 @@
             </Modal>
           )}
 
-          {reprint && <ReceiptModal sale={reprint} business={db.business} customers={db.customers} title="Cetak ulang struk" onClose={() => setReprint(null)} />}
+          {reprint && <ReceiptModal sale={withKasbonStatus(reprint, db)} business={db.business} customers={db.customers} title="Cetak ulang struk" onClose={() => setReprint(null)} />}
         </div>
       );
     }
@@ -4222,7 +4590,7 @@
     // =====================================================================
     // PRODUCTS
     // =====================================================================
-    const EMPTY_PRODUCT = { name: '', sku: '', category: 'Coffee', buy_price: 10000, sell_price: 25000, promo_price: 0, stock: 20, min_stock: 5, unit: 'Pcs', img: '' };
+    const EMPTY_PRODUCT = { name: '', sku: '', category: 'Coffee', buy_price: 10000, sell_price: 25000, promo_price: 0, stock: 20, min_stock: 5, unit: 'Pcs', img: '', variants: [] };
 
     function ProductsModule({ db, setDb, notify, currentUser, hasPermission }) {
       const [editing, setEditing] = useState(null);
@@ -4253,7 +4621,16 @@
         ? `Tampil di kasir: ${formatIDR(form.sell_price)} dicoret → ${formatIDR(promoPrice)} (hemat ${Math.round((1 - promoPrice / form.sell_price) * 100)}%)`
         : 'Kosongkan jika tidak ada diskon.';
 
-      const open = (p) => { setEditing(p); setForm(p === 'new' ? { ...EMPTY_PRODUCT, category: db.categories.find(c => c !== 'Semua') || 'Lainnya' } : { ...EMPTY_PRODUCT, ...p }); setConfirmDelete(false); setSubmitted(false); };
+      const [newCat, setNewCat] = useState(null);
+      const addCategory = () => {
+        const name = (newCat || '').trim();
+        if (!name) return;
+        if (!db.categories.some(c => c.toLowerCase() === name.toLowerCase())) setDb(prev => ({ ...prev, categories: [...prev.categories, name] }));
+        setForm(f => ({ ...f, category: db.categories.find(c => c.toLowerCase() === name.toLowerCase()) || name }));
+        setNewCat(null);
+      };
+      const setVariant = (i, k, v) => setForm(f => ({ ...f, variants: f.variants.map((x, j) => j === i ? { ...x, [k]: v } : x) }));
+      const open = (p) => { setNewCat(null); setEditing(p); setForm(p === 'new' ? { ...EMPTY_PRODUCT, category: db.categories.find(c => c !== 'Semua') || 'Lainnya' } : { ...EMPTY_PRODUCT, ...p }); setConfirmDelete(false); setSubmitted(false); };
       const close = () => setEditing(null);
 
       // Both filter counts follow the search, so "Semua (5)" means 5 products match what was typed
@@ -4270,7 +4647,8 @@
           name: form.name.trim(), category: form.category,
           buy_price: Number(form.buy_price) || 0, sell_price: Number(form.sell_price) || 0, promo_price: promoPrice,
           stock: parseInt(form.stock, 10) || 0, min_stock: parseInt(form.min_stock, 10) || 0,
-          unit: form.unit || 'Pcs', img: form.img || ''
+          unit: form.unit || 'Pcs', img: form.img || '',
+          variants: (form.variants || []).filter(v => v.name.trim()).map(v => ({ id: v.id || generateId('VAR'), name: v.name.trim(), price: Number(v.price) || 0 }))
         };
         if (editing === 'new') {
           const added = { id: 'p-' + Date.now(), sku: skuTrim || autoSku(), ...clean };
@@ -4374,7 +4752,7 @@
           </Card>
 
           {editing && (
-            <Modal title={editing === 'new' ? 'Tambah produk' : 'Edit produk'} onClose={close} size="lg"
+            <Modal title={editing === 'new' ? 'Tambah produk' : 'Edit produk'} onClose={close} size="xl"
               footer={confirmDelete ? <>
                 <p className="flex-1 self-center text-sm font-medium text-rose-700">Hapus produk ini secara permanen?</p>
                 <Btn variant="secondary" onClick={() => setConfirmDelete(false)}>Batal</Btn>
@@ -4385,33 +4763,72 @@
                 <Btn variant="secondary" onClick={close}>Batal</Btn>
                 <Btn onClick={save}>Simpan</Btn>
               </>}>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="sm:col-span-2">
+              {/* Six-column grid: pairs take 3 columns each, the stock row 2 each, so every input edge lines up */}
+              <div className="grid grid-cols-1 items-start gap-x-4 gap-y-5 sm:grid-cols-6">
+                <div className="sm:col-span-6">
                   <ImageUpload label="Foto produk" value={form.img} onChange={(v) => setForm(f => ({ ...f, img: v }))}
                     hint="Ambil foto atau pilih dari galeri. Foto otomatis dipotong persegi dan dikompres agar ringan." />
                 </div>
-                <Field label="Nama produk" error={nameError} className="sm:col-span-2">
+                <Field label="Nama produk" error={nameError} className="sm:col-span-6">
                   <input autoFocus value={form.name} onChange={set('name')} className={inputCls} placeholder="cth. Es Kopi Susu" />
                 </Field>
-                <Field label="Kode SKU" error={skuError} hint="Harus unik. Kosongkan untuk dibuat otomatis."><input value={form.sku} aria-invalid={!!skuError} onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase().replace(/\s/g, '') }))} className={cx(inputCls, 'font-mono', skuError && 'border-rose-400')} placeholder="SKU-001" /></Field>
-                <Field label="Kategori">
-                  <select value={form.category} onChange={set('category')} className={inputCls}>
-                    {db.categories.filter(c => c !== 'Semua').map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </Field>
-                <Field label="Harga beli (HPP)"><MoneyInput value={form.buy_price} onChange={set('buy_price')} /></Field>
-                <Field label="Harga jual normal" hint={priceWarn}><MoneyInput value={form.sell_price} onChange={set('sell_price')} /></Field>
-                <Field label="Harga promo (harga coret)" error={promoError} hint={promoHint} className="sm:col-span-2">
-                  <div className="flex gap-2">
-                    <div className="flex-1"><MoneyInput value={form.promo_price} onChange={set('promo_price')} placeholder="Tidak ada diskon" /></div>
-                    {[10, 20, 30].map(pct => (
-                      <Btn key={pct} variant="secondary" size="sm" className="min-h-[44px]" onClick={() => setForm(f => ({ ...f, promo_price: Math.round(f.sell_price * (1 - pct / 100) / 500) * 500 }))}>−{pct}%</Btn>
-                    ))}
+                <Field label="Kode SKU" error={skuError} hint="Kosongkan untuk dibuat otomatis." className="sm:col-span-3"><input value={form.sku} aria-invalid={!!skuError} onChange={e => setForm(f => ({ ...f, sku: e.target.value.toUpperCase().replace(/\s/g, '') }))} className={cx(inputCls, 'font-mono', skuError && 'border-rose-400')} placeholder="SKU-001" /></Field>
+                <div className="sm:col-span-3">
+                  <span className="text-sm font-medium text-slate-700">Kategori</span>
+                  {newCat === null ? (
+                    <div className="mt-1.5 flex gap-2">
+                      <select aria-label="Kategori" value={form.category} onChange={set('category')} className={cx(inputCls, 'min-w-0 flex-1')}>
+                        {db.categories.filter(c => c !== 'Semua').map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      {currentUser.role === 'owner' && <IconBtn icon="plus" label="Buat kategori baru" onClick={() => setNewCat('')} className="border border-slate-300" />}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 flex gap-2">
+                      <input autoFocus aria-label="Nama kategori baru" value={newCat} maxLength={30} onChange={e => setNewCat(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } if (e.key === 'Escape') { e.stopPropagation(); setNewCat(null); } }} placeholder="cth. Kopi Susu" className={cx(inputCls, 'min-w-0 flex-1')} />
+                      <Btn onClick={addCategory} disabled={!newCat.trim()} className="flex-shrink-0">Simpan</Btn>
+                      <IconBtn icon="x" label="Batal membuat kategori" onClick={() => setNewCat(null)} />
+                    </div>
+                  )}
+                  {currentUser.role === 'owner' && newCat === null && <span className="mt-1 block text-xs text-slate-500">Tekan + untuk kategori baru.</span>}
+                </div>
+                <Field label="Harga beli (HPP)" className="sm:col-span-3"><MoneyInput value={form.buy_price} onChange={set('buy_price')} /></Field>
+                <Field label="Harga jual normal" hint={priceWarn} className="sm:col-span-3"><MoneyInput value={form.sell_price} onChange={set('sell_price')} /></Field>
+                <div className="sm:col-span-6">
+                  <span className="text-sm font-medium text-slate-700">Harga promo (harga coret)</span>
+                  <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+                    <div className="min-w-0 flex-1"><MoneyInput aria-label="Harga promo" value={form.promo_price} onChange={set('promo_price')} placeholder="Tidak ada diskon" /></div>
+                    <div role="group" aria-label="Potongan cepat" className="grid grid-cols-3 gap-2 sm:w-[216px] sm:flex-shrink-0">
+                      {[10, 20, 30].map(pct => (
+                        <button key={pct} type="button" onClick={() => setForm(f => ({ ...f, promo_price: Math.round(f.sell_price * (1 - pct / 100) / 500) * 500 }))}
+                          className={cx('min-h-[44px] rounded-xl border border-slate-300 bg-white text-sm font-semibold text-slate-700 tabular transition-colors hover:bg-slate-50', focusRing)}>−{pct}%</button>
+                      ))}
+                    </div>
                   </div>
-                </Field>
-                <Field label="Jumlah stok"><input type="number" min="0" inputMode="numeric" value={form.stock} onChange={set('stock')} className={cx(inputCls, 'tabular')} /></Field>
-                <Field label="Batas stok minimum" hint="Peringatan muncul di bawah angka ini."><input type="number" min="0" inputMode="numeric" value={form.min_stock} onChange={set('min_stock')} className={cx(inputCls, 'tabular')} /></Field>
-                <Field label="Satuan"><input value={form.unit} onChange={set('unit')} className={inputCls} placeholder="Pcs / Cup / Kg" /></Field>
+                  {promoError ? <span className="mt-1 block text-xs font-medium text-rose-600" role="alert">{promoError}</span> : <span className="mt-1 block text-xs text-slate-500">{promoHint}</span>}
+                </div>
+                <Field label="Jumlah stok" className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.stock} onChange={set('stock')} className={cx(inputCls, 'tabular')} /></Field>
+                <Field label="Stok minimum" hint="Peringatan di bawah angka ini." className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.min_stock} onChange={set('min_stock')} className={cx(inputCls, 'tabular')} /></Field>
+                <Field label="Satuan" className="sm:col-span-2"><input value={form.unit} onChange={set('unit')} className={inputCls} placeholder="Pcs / Cup / Kg" /></Field>
+                <div className="sm:col-span-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-sm font-medium text-slate-700">Varian</span>
+                      <span className="block text-xs text-slate-500">Contoh: ukuran Kecil/Besar atau rasa. Stok dipakai bersama.</span>
+                    </div>
+                    <Btn variant="secondary" size="sm" icon="plus" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: '', name: '', price: f.sell_price }] }))}>Tambah varian</Btn>
+                  </div>
+                  {(form.variants || []).length > 0 && (
+                    <ul className="mt-3 space-y-2">
+                      {form.variants.map((v, i) => (
+                        <li key={v.id || i} className="flex items-center gap-2">
+                          <input aria-label={`Nama varian ${i + 1}`} value={v.name} maxLength={30} onChange={e => setVariant(i, 'name', e.target.value)} placeholder="cth. Besar" className={cx(inputCls, 'min-w-0 flex-1')} />
+                          <div className="w-36 flex-shrink-0 sm:w-44"><MoneyInput aria-label={`Harga varian ${i + 1}`} value={v.price} onChange={(val) => setVariant(i, 'price', val && val.target ? val.target.value : val)} /></div>
+                          <IconBtn icon="trash" label={`Hapus varian ${v.name || i + 1}`} iconClass="h-4 w-4" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== i) }))} className="text-slate-500 hover:bg-rose-50 hover:text-rose-600" />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
             </Modal>
           )}
@@ -4693,7 +5110,7 @@
               <span className="text-sm font-medium text-slate-700">Cari</span>
               <SearchInput id="po-search" value={poSearch} onChange={setPoSearch} placeholder="Nama supplier, no. PO, atau barang…" className="mt-1.5" />
             </div>
-            <Field label="Bulan" className="sm:w-56">
+            <Field label="Bulan" className="w-full sm:w-64">
               <select value={poMonth} onChange={e => setPoMonth(e.target.value)} className={inputCls}>
                 <option value="all">Semua bulan</option>
                 {poMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
@@ -4957,22 +5374,35 @@
         const info = myAttendance ? attendanceInfo(myAttendance, work, currentUser) : null;
         return (
           <div className="space-y-5">
-            <Card className="p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm text-slate-600">{myShift.name} · {myShift.start}–{myShift.end} · toleransi {work.late_tolerance} menit</p>
-                  {!myAttendance && <p className="mt-1 text-lg font-bold text-slate-900">Anda belum absen masuk.</p>}
-                  {myAttendance && !myAttendance.clock_out && <p className="mt-1 text-lg font-bold text-slate-900">Masuk {fmtTime(myAttendance.clock_in)} {info.lateMin ? <Badge tone="amber" className="ml-1 align-middle">Terlambat {fmtDuration(info.lateMin)}</Badge> : <Badge tone="green" className="ml-1 align-middle">Tepat waktu</Badge>}</p>}
-                  {myAttendance?.clock_out && <p className="mt-1 text-lg font-bold text-slate-900">Selesai: {fmtTime(myAttendance.clock_in)}–{fmtTime(myAttendance.clock_out)} ({fmtDuration(info.worked)})</p>}
-                  {ruleSummary && <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><SvgIcon name="location" className="h-3.5 w-3.5" />Absen {ruleSummary}.</p>}
-                </div>
-                {!myAttendance && <Btn icon="login" onClick={clockIn} disabled={clocking} className="sm:min-w-[180px]">{clocking ? 'Memeriksa lokasi…' : 'Absen masuk'}</Btn>}
-                {myAttendance && !myAttendance.clock_out && <Btn variant="dark" icon="logout" onClick={clockOut} disabled={clocking} className="sm:min-w-[180px]">{clocking ? 'Memeriksa lokasi…' : 'Absen pulang'}</Btn>}
+            <Card className="p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-600"><span className="font-semibold text-slate-900">{myShift.name}</span> · {myShift.start}–{myShift.end} · toleransi {work.late_tolerance} menit</p>
+                {myAttendance?.clock_out && <Badge tone="slate">Total kerja {fmtDuration(info.worked)}</Badge>}
               </div>
-              {myAttendance && !myAttendance.clock_out && <p className="mt-3 text-xs text-slate-500">Pulang lewat {myShift.end} lebih dari {work.overtime_min} menit otomatis diajukan sebagai lembur ke Bos.</p>}
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 text-sm font-medium text-slate-600"><SvgIcon name="login" className="h-4 w-4" />Absen datang</span>
+                    {myAttendance && (info.lateMin ? <Badge tone="amber">Terlambat {fmtDuration(info.lateMin)}</Badge> : <Badge tone="green">Tepat waktu</Badge>)}
+                  </div>
+                  {myAttendance
+                    ? <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 tabular">{fmtTime(myAttendance.clock_in)}</p>
+                    : <Btn icon="login" onClick={clockIn} disabled={clocking} className="mt-3 w-full">{clocking ? 'Memeriksa lokasi…' : 'Absen datang sekarang'}</Btn>}
+                </div>
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <span className="flex items-center gap-2 text-sm font-medium text-slate-600"><SvgIcon name="logout" className="h-4 w-4" />Absen pulang</span>
+                  {myAttendance?.clock_out
+                    ? <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 tabular">{fmtTime(myAttendance.clock_out)}</p>
+                    : myAttendance
+                      ? <Btn variant="dark" icon="logout" onClick={clockOut} disabled={clocking} className="mt-3 w-full">{clocking ? 'Memeriksa lokasi…' : 'Absen pulang sekarang'}</Btn>
+                      : <p className="mt-3 flex min-h-[44px] items-center text-sm text-slate-500">Bisa setelah absen datang.</p>}
+                </div>
+              </div>
+              {ruleSummary && <p className="mt-3 flex items-center gap-1.5 text-xs text-slate-500"><SvgIcon name="location" className="h-3.5 w-3.5" />Absen {ruleSummary}.</p>}
+              {myAttendance && !myAttendance.clock_out && <p className="mt-1 text-xs text-slate-500">Pulang lewat {myShift.end} lebih dari {work.overtime_min} menit otomatis diajukan sebagai lembur ke Bos.</p>}
             </Card>
 
-            <Field label="Bulan" className="max-w-xs"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
+            <Field label="Bulan" className="w-full sm:w-64"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <StatCard label="Hadir" value={`${recap.present} hari`} sub={`${recap.lateDays}× terlambat · sakit ${recap.sick} · izin ${recap.permit} · alpha ${recap.alpha}`} icon="calendar" />
               <StatCard label="Lembur disetujui" value={fmtDuration(recap.otMinutes)} sub={recap.otPending ? `${recap.otPending} menunggu persetujuan` : formatIDR(recap.otPay)} icon="clock" tone="blue" />
@@ -4988,7 +5418,7 @@
                     {myRecords.map(r => { const i = attendanceInfo(r, work, currentUser); return (
                       <li key={r.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
                         <span className="text-slate-700">{fmtDateShort(r.date)}</span>
-                        <span className="flex items-center gap-2 tabular">{fmtTime(r.clock_in)}–{fmtTime(r.clock_out)} {i.lateMin ? <Badge tone="amber">Telat {i.lateMin}m</Badge> : null}</span>
+                        <span className="flex items-center gap-2 tabular">{fmtTime(r.clock_in)}–{fmtTime(r.clock_out)} {i.lateMin ? <Badge tone="amber">Telat {fmtDuration(i.lateMin)}</Badge> : null}</span>
                       </li>); })}
                   </ul>
                 )}
@@ -5458,7 +5888,7 @@
               <Btn variant="secondary" icon="download" onClick={exportCsv}>Excel (CSV)</Btn>
               <Btn variant="dark" icon="download" onClick={downloadPdf} disabled={pdfBusy}>{pdfBusy ? 'Membuat PDF…' : 'Unduh PDF'}</Btn>
             </>} />
-          <Field label="Bulan" className="max-w-xs"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
+          <Field label="Bulan" className="w-full sm:w-64"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <Card className="print-area p-5">
               <h3 className="text-base font-bold text-slate-900">{db.business.name}</h3>
@@ -6638,7 +7068,7 @@
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
       }, [onClose]);
-      const stockOf = (id) => products.find(p => p.id === id)?.stock ?? Infinity;
+      const stockOf = (id) => products.find(p => p.id === productIdOf({ id }))?.stock ?? Infinity;
       const changeQty = (it, delta) => {
         if (delta > 0 && it.qty >= stockOf(it.id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
         setCart(prev => prev.map(c => c.id === it.id ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
@@ -6656,7 +7086,7 @@
                 <ul className="divide-y divide-slate-100">
                   {cart.map(it => (
                     <li key={it.id} className="flex gap-3 py-3">
-                      <ProductThumb product={products.find(p => p.id === it.id) || it} className="h-12 w-12 flex-shrink-0 rounded-lg" textClass="text-xs" />
+                      <ProductThumb product={products.find(p => p.id === productIdOf(it)) || it} className="h-12 w-12 flex-shrink-0 rounded-lg" textClass="text-xs" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-1">
                           <div className="min-w-0">
