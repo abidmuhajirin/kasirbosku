@@ -393,6 +393,7 @@
 
     const BTN_VARIANTS = {
       primary: 'bg-brand-700 text-white hover:bg-brand-800 shadow-sm',
+      success: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm',
       secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50',
       danger: 'bg-rose-600 text-white hover:bg-rose-700',
       warning: 'bg-amber-400 text-slate-900 hover:bg-amber-300',
@@ -1158,7 +1159,8 @@
 
     const SESSION_KEY = 'kasirbosku_session';
     // Nomor WhatsApp CS penjual (format 62…). Dipakai di Bantuan dan Lupa password.
-    const CS_WA = '6281234567890';
+    const CS_WA = '6285169438438';
+    const MAKER_URL = 'https://menjadibos.com';
     // Single settings objects; every other top-level list is a collection of records with an id
     const DOC_KEYS = ['business', 'permissions', 'categories'];
     const COLLECTION_KEYS = ['users', 'products', 'stockHistory', 'sales', 'offlineQueue', 'cashSessions', 'suppliers', 'purchases', 'customers', 'debt_payments', 'expenses', 'coupons', 'seasonal_promos', 'employeeIncentives', 'investors', 'investor_payouts', 'staff_notifications', 'leaves', 'attendance', 'overtime', 'rewards'];
@@ -1764,6 +1766,7 @@
               </Card>
             )}
             <p className="mt-4 text-center text-xs text-slate-500">Data toko tersimpan di server dan tetap bisa dipakai saat sinyal hilang.</p>
+            <p className="mt-2 text-center text-xs text-slate-500">crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className={cx('font-semibold text-brand-700 hover:underline', focusRing)}>menjadibos.com</a></p>
           </div>
           {forgot && <ForgotPasswordModal username={login.username.trim()} onClose={() => setForgot(false)} />}
         </div>
@@ -2185,6 +2188,7 @@
                 <SvgIcon name="help" className="h-5 w-5 text-sun-300" />
                 <span className="font-medium">Bantuan & Panduan</span>
               </button>
+              <p className="px-3 text-[11px] text-brand-200">crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className="font-semibold text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">menjadibos.com</a></p>
               <div className="rounded-xl bg-white/10 p-3 ring-1 ring-white/15">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={currentUser.name} className="h-9 w-9 text-sm ring-2 ring-white/40" />
@@ -2473,13 +2477,300 @@
       );
     }
 
-    function ReceiptModal({ sale, business, onClose, title }) {
+    // ---------- Receipt as text (thermal printers, WhatsApp) ----------
+    // Characters per line on common thermal paper with the printer's standard font
+    const RECEIPT_COLS = { '58': 32, '80': 48 };
+    // Thermal printers only know plain ASCII; Rp amounts use a normal space
+    const plainText = (v) => String(v ?? '').replace(/\u00a0/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[×]/g, 'x').replace(/[–—]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[^\x20-\x7e]/g, '');
+    const money = (v) => plainText(formatIDR(v));
+    function wrapText(text, cols) {
+      const out = [];
+      for (const para of plainText(text).split('\n')) {
+        let line = '';
+        for (const word of para.split(' ')) {
+          if (!line) line = word;
+          else if ((line + ' ' + word).length <= cols) line += ' ' + word;
+          else { out.push(line); line = word; }
+          while (line.length > cols) { out.push(line.slice(0, cols)); line = line.slice(cols); }
+        }
+        out.push(line);
+      }
+      return out;
+    }
+    const twoCols = (left, right, cols) => {
+      left = plainText(left); right = plainText(right);
+      const space = cols - left.length - right.length;
+      return space >= 1 ? left + ' '.repeat(space) + right : [left, ' '.repeat(Math.max(0, cols - right.length)) + right];
+    };
+
+    // The same content and switches as <ReceiptPaper>, as lines: { text, align: 'left'|'center', bold, big }
+    function receiptLines(sale, business, cols) {
+      const r = business.receipt || {};
+      const L = [];
+      const add = (text, o = {}) => (Array.isArray(text) ? text : [text]).forEach(t => L.push({ text: t, align: 'left', ...o }));
+      const center = (text, o) => wrapText(text, cols).forEach(t => add(t, { align: 'center', ...o }));
+      const rule = () => add('-'.repeat(cols));
+      const row = (a, b, o) => add(twoCols(a, b, cols), o);
+      const manualDiscount = (sale.discount || 0) - (sale.coupon_discount || 0);
+      center(business.name, { bold: true, big: true });
+      if (r.show_address && business.address) center(business.address);
+      if (r.show_phone && business.phone) center(`Telp ${business.phone}`);
+      if (r.header) center(r.header);
+      rule();
+      add(`${sale.receipt_no}${sale.status === 'void' ? ' (BATAL)' : ''}`);
+      add(plainText(fmtDateTime(sale.date)));
+      if (r.show_cashier) add(wrapText(`Kasir: ${sale.cashier}`, cols));
+      if (r.show_customer && sale.customer_name && sale.customer_name !== 'Pelanggan Umum') add(wrapText(`Pelanggan: ${sale.customer_name}`, cols));
+      rule();
+      for (const it of sale.items) {
+        add(wrapText(it.name, cols));
+        row(`${it.qty} x ${money(it.sell_price)}`, money(it.sell_price * it.qty));
+      }
+      rule();
+      row('Subtotal', money(sale.subtotal));
+      if (r.show_discount && manualDiscount > 0) row('Diskon', '-' + money(manualDiscount));
+      if (r.show_discount && sale.coupon_discount > 0) row(`Voucher ${sale.coupon_code}`, '-' + money(sale.coupon_discount));
+      if (r.show_tax && sale.tax > 0) row('Pajak', money(sale.tax));
+      row('TOTAL', money(sale.total), { bold: true });
+      if (sale.cash_paid != null) { row('Tunai', money(sale.cash_paid)); row('Kembali', money(sale.cash_paid - sale.total)); }
+      add(`Bayar: ${PAYMENT_LABELS[sale.payment_method]}`);
+      if (r.footer) { add(''); center(r.footer); }
+      if (r.show_brand) { add(''); center(`Dibuat dengan ${APP_NAME}`); }
+      return L;
+    }
+
+    // ESC/POS bytes understood by almost every 58/80 mm thermal printer
+    async function escposReceipt(sale, business) {
+      const paper = business.receipt?.paper === '80' ? '80' : '58';
+      const cols = RECEIPT_COLS[paper];
+      const bytes = [];
+      const push = (...b) => b.forEach(x => Array.isArray(x) || x instanceof Uint8Array ? bytes.push(...x) : bytes.push(x));
+      const text = (t) => push(...new TextEncoder().encode(t));
+      push(0x1b, 0x40); // reset
+      if (business.receipt?.show_logo && business.receipt?.logo) {
+        try { push(0x1b, 0x61, 1); push(await logoRaster(business.receipt.logo, paper === '80' ? 576 : 384)); push(0x0a); } catch { /* print without logo */ }
+      }
+      for (const l of receiptLines(sale, business, cols)) {
+        push(0x1b, 0x61, l.align === 'center' ? 1 : 0);
+        push(0x1b, 0x45, l.bold ? 1 : 0);
+        // Double height only, so a line still fits the same number of characters
+        push(0x1d, 0x21, l.big ? 0x01 : 0x00);
+        text(l.text); push(0x0a);
+      }
+      push(0x1b, 0x45, 0, 0x1d, 0x21, 0);
+      push(0x0a, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00); // feed, then cut if the printer has a cutter
+      return new Uint8Array(bytes);
+    }
+
+    // Logo as a 1-bit raster image (GS v 0), at most half the paper width
+    function logoRaster(src, paperDots) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const w = Math.max(8, Math.min(Math.floor(paperDots / 2 / 8) * 8, Math.ceil(img.width / 8) * 8));
+            const h = Math.max(1, Math.round(img.height * w / img.width));
+            const c = document.createElement('canvas'); c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+            const px = ctx.getImageData(0, 0, w, h).data;
+            const rowBytes = w / 8, data = new Uint8Array(rowBytes * h);
+            for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              if (px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11 < 150) data[y * rowBytes + (x >> 3)] |= 0x80 >> (x & 7);
+            }
+            resolve([0x1d, 0x76, 0x30, 0x00, rowBytes & 0xff, rowBytes >> 8, h & 0xff, h >> 8, ...data]);
+          } catch (e) { reject(e); }
+        };
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    // ---------- Printer connection (remembered per device) ----------
+    const PRINTER_KEY = 'kasirbosku_printer';
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const PRINTER_METHODS = [
+      { id: 'bluetooth', label: 'Bluetooth langsung', desc: 'Printer Bluetooth yang mendukung BLE. Chrome di Android, Windows, atau Mac.', ok: () => !!navigator.bluetooth },
+      { id: 'rawbt', label: 'Bluetooth lewat aplikasi RawBT', desc: 'Untuk hampir semua printer Bluetooth murah di Android. Pasang aplikasi RawBT dari Play Store, lalu sambungkan printer di sana sekali.', ok: () => isAndroid },
+      { id: 'usb', label: 'USB langsung', desc: 'Printer USB (di HP pakai kabel OTG). Chrome di Android atau komputer.', ok: () => !!navigator.usb },
+      { id: 'browser', label: 'Printer terpasang (dialog cetak)', desc: 'Printer yang sudah terpasang di komputer/HP, termasuk printer USB berdriver di Windows dan AirPrint di iPhone.', ok: () => true }
+    ];
+    const loadPrinter = () => readLocal(PRINTER_KEY, null);
+    // Bluetooth service ids used by common thermal printers
+    const BT_SERVICES = ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '49535343-fe7d-4ae5-8fa9-9fafd205e455', '0000ff00-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb', '0000fee7-0000-1000-8000-00805f9b34fb'];
+    const printerLink = { bt: null, usb: null }; // open connections, reused while the app is open
+
+    async function btWrite(bytes) {
+      let ch = printerLink.bt;
+      if (!ch || !ch.service.device.gatt.connected) {
+        const device = ch?.service.device.gatt ? ch.service.device : await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_SERVICES });
+        const server = await device.gatt.connect();
+        ch = null;
+        for (const svc of await server.getPrimaryServices()) {
+          for (const c of await svc.getCharacteristics()) if (c.properties.writeWithoutResponse || c.properties.write) { ch = c; break; }
+          if (ch) break;
+        }
+        if (!ch) throw new Error('Printer ini tidak bisa menerima data lewat Bluetooth langsung. Coba cara RawBT.');
+        printerLink.bt = ch;
+        writeLocal(PRINTER_KEY, { ...(loadPrinter() || {}), method: 'bluetooth', name: device.name || 'Printer Bluetooth' });
+      }
+      for (let i = 0; i < bytes.length; i += 180) {
+        const part = bytes.slice(i, i + 180);
+        if (ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(part); else await ch.writeValue(part);
+        await new Promise(r => setTimeout(r, 20));
+      }
+    }
+
+    async function usbWrite(bytes) {
+      let link = printerLink.usb;
+      if (!link) {
+        const device = await navigator.usb.requestDevice({ filters: [] });
+        await device.open();
+        if (device.configuration === null) await device.selectConfiguration(1);
+        let found = null;
+        for (const itf of device.configuration.interfaces) {
+          for (const alt of itf.alternates) {
+            const ep = alt.endpoints.find(e => e.direction === 'out');
+            if (ep) { found = { itf: itf.interfaceNumber, ep: ep.endpointNumber }; break; }
+          }
+          if (found) break;
+        }
+        if (!found) throw new Error('Perangkat USB ini bukan printer.');
+        try { await device.claimInterface(found.itf); }
+        catch { throw new Error('Printer sedang dipakai driver komputer. Pilih cara "Printer terpasang (dialog cetak)".'); }
+        link = printerLink.usb = { device, ...found };
+        writeLocal(PRINTER_KEY, { ...(loadPrinter() || {}), method: 'usb', name: device.productName || 'Printer USB' });
+      }
+      await link.device.transferOut(link.ep, bytes);
+    }
+
+    function rawbtSend(bytes) {
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      // Opens RawBT (or its Play Store page if it is not installed yet)
+      window.location.href = `intent:base64,${btoa(bin)}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
+    }
+
+    // Normal print dialog, with the page sized exactly to the receipt so nothing is cut or scaled down
+    function browserPrint(paper) {
+      const el = document.querySelector('.print-area.receipt');
+      const widthMm = paper === '80' ? 80 : 58;
+      const heightMm = el ? Math.ceil(el.scrollHeight / 3.78 * (widthMm / (el.offsetWidth / 3.78))) + 8 : 200;
+      const style = document.createElement('style');
+      style.textContent = `@media print { @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
+        .print-area.receipt { width: ${widthMm}mm !important; max-width: none !important; padding: 2mm ${paper === '80' ? 4 : 3}mm !important; border: 0 !important; border-radius: 0 !important; font-size: ${paper === '80' ? 11 : 9}pt !important; } }`;
+      document.head.appendChild(style);
+      const done = () => { style.remove(); window.removeEventListener('afterprint', done); };
+      window.addEventListener('afterprint', done);
+      window.print();
+      setTimeout(done, 60000);
+    }
+
+    async function printReceipt(sale, business, method) {
+      const paper = business.receipt?.paper === '80' ? '80' : '58';
+      if (method === 'browser') return browserPrint(paper);
+      const bytes = await escposReceipt(sale, business);
+      if (method === 'bluetooth') return btWrite(bytes);
+      if (method === 'usb') return usbWrite(bytes);
+      if (method === 'rawbt') return rawbtSend(bytes);
+    }
+
+    function PrinterSetupModal({ onClose, onChosen }) {
+      const current = loadPrinter();
+      const methods = PRINTER_METHODS.filter(m => m.ok());
+      return (
+        <Modal title="Pilih cara mencetak" desc="Disimpan di perangkat ini saja. Ukuran kertas diatur di Pengaturan Toko → Struk." onClose={onClose} size="sm"
+          footer={<Btn variant="secondary" className="flex-1" onClick={onClose}>Batal</Btn>}>
+          <ul className="space-y-2">
+            {methods.map(m => (
+              <li key={m.id}>
+                <button type="button" onClick={() => { writeLocal(PRINTER_KEY, { method: m.id, name: m.label }); onChosen(m.id); }}
+                  className={cx('w-full rounded-xl border p-3 text-left transition-colors hover:border-brand-500 hover:bg-brand-50', focusRing, current?.method === m.id ? 'border-brand-600 bg-brand-50' : 'border-slate-200')}>
+                  <span className="block text-sm font-semibold text-slate-900">{m.label}{current?.method === m.id && <Badge tone="teal" className="ml-2 align-middle">Dipakai</Badge>}</span>
+                  <span className="mt-0.5 block text-xs text-slate-600">{m.desc}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {!navigator.bluetooth && !isAndroid && <p className="mt-3 text-xs text-slate-500">Di iPhone/iPad, cetak lewat printer yang mendukung AirPrint, atau pakai aplikasi printer thermal yang menyediakan fitur cetak.</p>}
+        </Modal>
+      );
+    }
+
+    // Sends the receipt to the customer's WhatsApp (monospace block so the columns line up)
+    const waNumber = (phone) => { const d = String(phone || '').replace(/\D/g, '').replace(/^0/, '62'); return /^62\d{8,13}$/.test(d) ? d : ''; };
+    function receiptWaLink(sale, business, phone) {
+      const body = receiptLines(sale, business, 32).map(l => l.text).join('\n');
+      return `https://wa.me/${phone}?text=${encodeURIComponent('```\n' + body + '\n```')}`;
+    }
+
+    // Settings → Struk: which printer this device uses, and a test print
+    function PrinterSettings({ sale, business }) {
+      const [setup, setSetup] = useState(false);
+      const [, refresh] = useState(0);
+      const [msg, setMsg] = useState(null);
+      const printer = loadPrinter();
+      const test = async (method) => {
+        setMsg(null);
+        try { await printReceipt({ ...sale, receipt_no: 'TES-CETAK' }, business, method); setMsg({ ok: true, text: method === 'browser' ? 'Dialog cetak dibuka.' : 'Tes cetak dikirim ke printer.' }); }
+        catch (e) { setMsg({ ok: false, text: e?.name === 'NotFoundError' ? 'Tidak ada printer yang dipilih.' : (e?.message || 'Gagal mencetak.') }); }
+        refresh(x => x + 1);
+      };
+      return (
+        <div className="rounded-xl border border-slate-200 p-3">
+          <p className="text-sm font-medium text-slate-700">Printer di perangkat ini</p>
+          <p className="mt-0.5 text-sm text-slate-600">{printer?.method ? printer.name : 'Belum dipilih'}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Btn variant="secondary" size="sm" icon="printer" onClick={() => setSetup(true)}>{printer?.method ? 'Ganti printer' : 'Pilih printer'}</Btn>
+            {printer?.method && <Btn variant="secondary" size="sm" onClick={() => test(printer.method)}>Tes cetak</Btn>}
+          </div>
+          {msg && <p className={cx('mt-2 text-xs font-medium', msg.ok ? 'text-emerald-700' : 'text-rose-600')} role="status">{msg.text}</p>}
+          {setup && <PrinterSetupModal onClose={() => setSetup(false)} onChosen={(m) => { setSetup(false); test(m); }} />}
+        </div>
+      );
+    }
+
+    function ReceiptModal({ sale, business, onClose, title, customers = [] }) {
+      const [setup, setSetup] = useState(false);
+      const [printing, setPrinting] = useState(false);
+      const [error, setError] = useState('');
+      const printer = loadPrinter();
+      const customer = customers.find(c => c.id === sale.customer_id);
+      const phone = customer && customer.id !== 'cust-1' ? waNumber(customer.phone) : '';
+      const doPrint = async (method) => {
+        setError(''); setPrinting(true);
+        try { await printReceipt(sale, business, method); }
+        catch (e) {
+          if (e && e.name === 'NotFoundError') setError('Tidak ada printer yang dipilih.');
+          else setError(e?.message || 'Gagal mencetak. Pastikan printer menyala dan tersambung.');
+        } finally { setPrinting(false); }
+      };
+      const onPrint = () => printer?.method ? doPrint(printer.method) : setSetup(true);
       return (
         <Modal title={title || (sale.payment_method === 'bayar_nanti' ? 'Kasbon tercatat' : 'Transaksi berhasil')} onClose={onClose} size="sm"
-          footer={<>
-            <Btn variant="secondary" icon="printer" className="flex-1" onClick={() => window.print()}>Cetak</Btn>
-            <Btn className="flex-1" onClick={onClose} autoFocus>Selesai</Btn>
-          </>}>
+          footer={<div className="flex w-full flex-col gap-2">
+            {sale.status !== 'void' && (phone ? (
+              <a href={receiptWaLink(sale, business, phone)} target="_blank" rel="noreferrer"
+                className={cx('inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700', focusRing)}>
+                <SvgIcon name="chat" className="h-4 w-4" />Kirim struk ke WhatsApp {customer.name.split(' ')[0]}
+              </a>
+            ) : (
+              <p className="text-center text-xs text-slate-500">Pilih pelanggan yang punya nomor WhatsApp di kasir untuk mengirim struk lewat WA.</p>
+            ))}
+            <div className="flex gap-2">
+              <Btn variant="secondary" icon="printer" className="flex-1" onClick={onPrint} disabled={printing}>{printing ? 'Mencetak…' : 'Cetak'}</Btn>
+              <Btn className="flex-1" onClick={onClose} autoFocus>Selesai</Btn>
+            </div>
+            <p className="text-center text-xs text-slate-500">
+              {printer?.method ? <>Printer: {printer.name} · </> : null}
+              <button type="button" onClick={() => setSetup(true)} className={cx('font-semibold text-brand-700 hover:underline', focusRing)}>{printer?.method ? 'Ganti' : 'Atur printer'}</button>
+            </p>
+            {error && <p className="text-center text-xs font-medium text-rose-600" role="alert">{error}</p>}
+          </div>}>
+          {setup && <PrinterSetupModal onClose={() => setSetup(false)} onChosen={(m) => { setSetup(false); doPrint(m); }} />}
           {sale.status === 'void' ? (
             <div className="mb-4 flex items-start gap-3 rounded-xl bg-rose-50 p-3 text-rose-900 no-print">
               <SvgIcon name="ban" className="mt-0.5 h-5 w-5 flex-shrink-0" />
@@ -3201,7 +3492,7 @@
 
               <div className="mt-3 flex gap-2">
                 <Btn variant="secondary" className="flex-1" disabled={!cart.length || isWalkIn || discountInvalid} onClick={handleBayarNanti} aria-describedby={isWalkIn ? 'kasbon-hint' : undefined}>Bayar Nanti</Btn>
-                <Btn className="flex-[2]" disabled={!cart.length || discountInvalid} onClick={openPayment}>Bayar {formatIDR(grandTotal)}</Btn>
+                <Btn variant="success" className="flex-[2]" disabled={!cart.length || discountInvalid} onClick={openPayment}>Bayar {formatIDR(grandTotal)}</Btn>
               </div>
               {isWalkIn && cart.length > 0 && <p id="kasbon-hint" className="mt-2 text-xs text-slate-500">Kasbon hanya untuk pelanggan terdaftar.</p>}
               </>}
@@ -3279,8 +3570,8 @@
             </Modal>
           )}
 
-          {receipt && <ReceiptModal sale={receipt} business={db.business} onClose={() => setReceipt(null)} />}
-          {reprint && <ReceiptModal sale={reprint} business={db.business} title={`Cetak ulang ${reprint.receipt_no}`} onClose={() => setReprint(null)} />}
+          {receipt && <ReceiptModal sale={receipt} business={db.business} customers={db.customers} onClose={() => setReceipt(null)} />}
+          {reprint && <ReceiptModal sale={reprint} business={db.business} customers={db.customers} title={`Cetak ulang ${reprint.receipt_no}`} onClose={() => setReprint(null)} />}
 
           {sessionModal === 'open' && (
             <OpenSessionModal db={db} setDb={setDb} notify={notify} currentUser={currentUser}
@@ -3782,7 +4073,7 @@
             </Modal>
           )}
 
-          {reprint && <ReceiptModal sale={reprint} business={db.business} title="Cetak ulang struk" onClose={() => setReprint(null)} />}
+          {reprint && <ReceiptModal sale={reprint} business={db.business} customers={db.customers} title="Cetak ulang struk" onClose={() => setReprint(null)} />}
         </div>
       );
     }
@@ -6024,7 +6315,9 @@
                 <div>
                   <span className="text-sm font-medium text-slate-700">Ukuran kertas</span>
                   <div className="mt-1.5"><SegmentedControl size="md" label="Ukuran kertas" value={form.receipt.paper} onChange={v => setNested('receipt', 'paper', v)} options={[{ value: '58', label: '58 mm' }, { value: '80', label: '80 mm' }]} /></div>
+                  <p className="mt-1 text-xs text-slate-500">{form.receipt.paper === '80' ? '48' : '32'} karakter per baris. Pilih sesuai lebar kertas di printer.</p>
                 </div>
+                <PrinterSettings sale={sampleSale} business={form} />
                 <Field label="Teks pembuka"><input value={form.receipt.header} onChange={e => setNested('receipt', 'header', e.target.value)} className={inputCls} /></Field>
                 <Field label="Teks penutup"><input value={form.receipt.footer} onChange={e => setNested('receipt', 'footer', e.target.value)} className={inputCls} /></Field>
                 <fieldset>
@@ -6175,6 +6468,7 @@
             <div className="flex items-start gap-3"><SvgIcon name="chat" className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-700" /><div><p className="text-sm font-semibold text-emerald-900">Chat CS via WhatsApp</p><p className="text-sm text-emerald-800">Untuk kendala sistem & bantuan teknis.</p></div></div>
             <a href={`https://wa.me/${CS_WA}`} target="_blank" rel="noreferrer" className={cx('inline-flex min-h-[44px] items-center justify-center rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800', focusRing)}><SvgIcon name="chat" className="mr-2 h-4 w-4" />Hubungi</a>
           </div>
+          <p className="mt-2 text-center text-xs text-slate-500">CS: +62 851-6943-8438 · {APP_NAME} crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className={cx('font-semibold text-brand-700 hover:underline', focusRing)}>menjadibos.com</a></p>
           <h4 className="mt-5 text-sm font-bold text-slate-900">Pertanyaan umum</h4>
           <SearchInput id="faq-search" value={search} onChange={setSearch} placeholder="Cari topik bantuan…" className="mt-2" />
           <div className="mt-3 space-y-2">
