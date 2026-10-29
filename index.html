@@ -133,30 +133,50 @@
       URL.revokeObjectURL(url);
     };
 
-    // Resizes uploads before storing: device storage is ~5 MB, a raw phone photo alone can exceed that.
+    // Resizes uploads before storing: a raw phone photo is 3–10 MB, the store only needs ~100 KB.
     // 'cover' crops to a square (menu photos), 'contain' keeps the whole image (QRIS must stay scannable).
-    function imageFileToDataUrl(file, { size = 480, mode = 'cover', type = 'image/jpeg', quality = 0.82 } = {}) {
+    // The result is made smaller (lower quality, then fewer pixels) until it fits maxBytes.
+    const PHOTO_INPUT_MAX = 20 * 1024 * 1024;
+    const dataUrlBytes = (d) => Math.round((d.length - d.indexOf(',') - 1) * 3 / 4);
+    function imageFileToDataUrl(file, { size = 480, mode = 'cover', type = 'image/webp', quality = 0.82, maxBytes = 120 * 1024 } = {}) {
       return new Promise((resolve, reject) => {
         if (!file || !file.type.startsWith('image/')) return reject(new Error('File harus berupa gambar (JPG, PNG, atau WEBP).'));
-        if (file.size > 10 * 1024 * 1024) return reject(new Error('Ukuran gambar maksimal 10 MB.'));
+        if (file.size > PHOTO_INPUT_MAX) return reject(new Error('Ukuran foto maksimal 20 MB.'));
         const url = URL.createObjectURL(file);
         const img = new Image();
         img.onload = () => {
+          URL.revokeObjectURL(url);
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
-          if (mode === 'cover') {
-            const s = Math.min(img.width, img.height);
-            canvas.width = canvas.height = size;
-            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size);
-            ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
-          } else {
-            const scale = Math.min(1, size / Math.max(img.width, img.height));
-            canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
-            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const draw = (px) => {
+            if (mode === 'cover') {
+              const s = Math.min(img.width, img.height);
+              canvas.width = canvas.height = px;
+              ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, px, px);
+              ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, px, px);
+            } else {
+              const scale = Math.min(1, px / Math.max(img.width, img.height));
+              canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+              ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            }
+          };
+          // Browsers that cannot make WEBP (older iPhones) fall back to JPEG
+          const encode = (q) => {
+            if (type === 'image/png') return canvas.toDataURL('image/png');
+            const d = canvas.toDataURL(type, q);
+            return d.startsWith(`data:${type}`) ? d : canvas.toDataURL('image/jpeg', q);
+          };
+          let px = size, out = '';
+          for (let round = 0; round < 6; round++) {
+            draw(px);
+            for (const q of type === 'image/png' ? [1] : [quality, 0.7, 0.6]) {
+              out = encode(q);
+              if (dataUrlBytes(out) <= maxBytes) return resolve(out);
+            }
+            px = Math.round(px * 0.8);
           }
-          URL.revokeObjectURL(url);
-          resolve(canvas.toDataURL(type, quality));
+          resolve(out);
         };
         img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Gambar tidak dapat dibaca.')); };
         img.src = url;
@@ -668,7 +688,7 @@
               <input id={inputId} type="file" accept="image/*" className="sr-only" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
             </label>
             <div className="min-w-0 space-y-2 pt-1">
-              <p className="text-xs text-slate-500">{hint || 'Ketuk kotak untuk memilih foto dari galeri atau kamera. Bisa juga tarik & lepas file.'}</p>
+              <p className="text-xs text-slate-500">{hint || 'Ketuk kotak untuk memilih foto dari galeri atau kamera. Bisa juga tarik & lepas file.'} Foto otomatis dikecilkan agar hemat memori dan kuota.</p>
               {value && (
                 <div className="flex flex-wrap gap-2">
                   <label htmlFor={inputId} className={cx('inline-flex min-h-[36px] cursor-pointer items-center rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50', focusRing)}>Ganti</label>
@@ -896,8 +916,12 @@
     // =====================================================================
     const PAYMENT_LABELS = { qris: 'QRIS', cash: 'Tunai', transfer: 'Transfer', bayar_nanti: 'Kasbon' };
     // 'owner' stays the internal id so saved data keeps working; it is shown as "Bos"
-    const ROLE_LABELS = { owner: 'Bos', supervisor: 'Supervisor', kepala_toko: 'Kepala Toko', kasir: 'Kasir' };
-    const ROLE_TONES = { owner: 'purple', supervisor: 'blue', kepala_toko: 'amber', kasir: 'teal' };
+    const ROLE_LABELS = { owner: 'Bos', supervisor: 'Supervisor', kepala_toko: 'Kepala Toko', kasir: 'Kasir', investor: 'Investor' };
+    const ROLE_TONES = { owner: 'purple', supervisor: 'blue', kepala_toko: 'amber', kasir: 'teal', investor: 'green' };
+    // People who work shifts, get paid a salary and appear in attendance / sales targets
+    const isStaffRole = (role) => role !== 'owner' && role !== 'investor';
+    // An investor only reads the store's numbers and their own profit share
+    const INVESTOR_TABS = new Set(['dashboard', 'sales_report', 'finance', 'investors']);
     const LEAVE_TYPES = {
       sakit: { label: 'Sakit', tone: 'amber', desc: 'Tidak masuk karena sakit.' },
       izin: { label: 'Izin', tone: 'blue', desc: 'Tidak masuk dengan izin Bos.' },
@@ -1155,6 +1179,33 @@
       return s && s.token && s.tenant && s.user ? s : null;
     }
 
+    // ---------- Trusted time ----------
+    // Difference between the server's clock and this device's, learned at every sync.
+    // Attendance uses it, so moving the phone's clock back does not change the recorded time.
+    let clockOffset = Number(readLocal('kasirbosku_clock_offset', 0)) || 0;
+    const trueNow = () => Date.now() + clockOffset;
+    function learnServerTime(serverNow) {
+      if (typeof serverNow !== 'number') return;
+      clockOffset = serverNow - Date.now();
+      writeLocal('kasirbosku_clock_offset', clockOffset);
+    }
+
+    // ---------- Attendance code ----------
+    // A 6-digit code that changes every 30 s, shown on the store's registered device.
+    // An employee absen-ing from a personal phone must type it, which needs being at the store to see the screen.
+    const ATT_CODE_STEP = 30000;
+    async function attendanceCodeAt(secret, t) {
+      const h = await hashPassword(String(Math.floor(t / ATT_CODE_STEP)), secret);
+      return String(parseInt(h.slice(0, 8), 16) % 1000000).padStart(6, '0');
+    }
+    // The code before and after the current one also count, for slow typing and small clock differences
+    async function attendanceCodeValid(secret, code) {
+      const t = trueNow();
+      for (const d of [0, -1, 1]) if (await attendanceCodeAt(secret, t + d * ATT_CODE_STEP) === code) return true;
+      return false;
+    }
+    const newSecret = () => [...crypto.getRandomValues(new Uint8Array(20))].map(b => b.toString(16).padStart(2, '0')).join('');
+
     // Phone status bar colour = colour at the top of the current screen
     function setThemeColor(color) {
       const m = document.querySelector('meta[name="theme-color"]');
@@ -1340,7 +1391,7 @@
 
     // Keeps this device and the server in step.
     // Local data = what the server has + this device's unsent changes (the outbox), so nothing is lost offline.
-    function useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd }) {
+    function useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd, readOnly = false }) {
       const enabled = !!session;
       const tenantId = session?.tenant.id;
       const cb = useRef({});
@@ -1428,6 +1479,7 @@
           if (res.rows.length) applyRows(res.rows);
           s.cursor = res.cursor;
           writeLocal(cloudKey(tenantId, 'cursor'), s.cursor);
+          learnServerTime(res.now);
           cb.current.onSessionUpdate?.({ token: res.token, user: res.user, tenant: res.tenant });
           if (!res.more) return;
         }
@@ -1464,7 +1516,7 @@
         if (!enabled) return;
         const s = st.current, prev = s.prev;
         s.prev = db;
-        if (prev === db) return;
+        if (prev === db || readOnly) return;
         let changed = false;
         const note = (coll, id, rec, before) => {
           const k = recKey(coll, id);
@@ -1716,6 +1768,62 @@
       );
     }
 
+    function AttendanceCodePrompt({ onDone }) {
+      const [code, setCode] = useState('');
+      const submit = (e) => { e.preventDefault(); if (code.length === 6) onDone(code); };
+      return (
+        <Modal title="Masukkan kode absen" desc="Lihat kode 6 angka di layar kasir toko. Kode berganti tiap 30 detik." onClose={() => onDone(null)} size="sm"
+          footer={<><Btn variant="secondary" onClick={() => onDone(null)}>Batal</Btn><Btn type="submit" form="att-code-form" disabled={code.length !== 6}>Absen</Btn></>}>
+          <form id="att-code-form" onSubmit={submit}>
+            <label htmlFor="att-code" className="sr-only">Kode absen</label>
+            <input id="att-code" autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code}
+              onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"
+              className={cx(inputCls, 'h-16 text-center font-mono text-3xl font-bold tracking-[0.4em]')} />
+          </form>
+        </Modal>
+      );
+    }
+
+    // Shown only on registered store devices: the current attendance code and how long it stays valid
+    function AttendanceCodeChip({ secret }) {
+      const [state, setState] = useState({ code: '', left: 30 });
+      const [open, setOpen] = useState(false);
+      useEffect(() => {
+        let alive = true, step = -1;
+        const tick = async () => {
+          const t = trueNow();
+          const s = Math.floor(t / ATT_CODE_STEP);
+          const left = Math.ceil(((s + 1) * ATT_CODE_STEP - t) / 1000);
+          if (s !== step) { step = s; const code = await attendanceCodeAt(secret, t); if (alive) setState({ code, left }); }
+          else if (alive) setState(x => ({ ...x, left }));
+        };
+        tick();
+        const id = setInterval(tick, 1000);
+        return () => { alive = false; clearInterval(id); };
+      }, [secret]);
+      const pretty = state.code ? `${state.code.slice(0, 3)} ${state.code.slice(3)}` : '··· ···';
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)} aria-label={`Kode absen ${pretty}, berganti dalam ${state.left} detik`}
+            className={cx('inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100', focusRing)}>
+            <SvgIcon name="key" className="h-4 w-4" />
+            <span className="hidden lg:inline">Kode absen</span>
+            <span className="font-mono text-sm tabular tracking-wider">{pretty}</span>
+          </button>
+          {open && (
+            <Modal title="Kode absen" desc="Karyawan yang absen dari HP-nya sendiri memasukkan kode ini." onClose={() => setOpen(false)} size="sm"
+              footer={<Btn variant="secondary" className="flex-1" onClick={() => setOpen(false)}>Tutup</Btn>}>
+              <p className="text-center font-mono text-5xl font-extrabold tracking-[0.15em] text-slate-900 tabular">{pretty}</p>
+              <div className="mx-auto mt-4 h-2 w-full max-w-xs overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-1000 ease-linear" style={{ width: `${(state.left / 30) * 100}%` }} />
+              </div>
+              <p className="mt-2 text-center text-sm text-slate-600">Berganti dalam {state.left} detik</p>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
     function Root() {
       const [session, setSession] = useState(() => CLOUD_API ? loadSession() : null);
       const [notice, setNotice] = useState('');
@@ -1751,8 +1859,9 @@
       // Right after the first sign-in the account is known only from the session
       const currentUser = db.users.find(u => u.id === currentUserId) || (cloud ? { ...session.user, status: 'Aktif' } : db.users[0]);
       const isOwner = currentUser.role === 'owner';
+      const isInvestor = currentUser.role === 'investor';
 
-      const [activeTab, setActiveTab] = useState('pos');
+      const [activeTab, setActiveTab] = useState(isInvestor ? 'dashboard' : 'pos');
       const [isOfflineMode, setIsOfflineMode] = useState(false);
       const [sidebarOpen, setSidebarOpen] = useState(false);
       const [toast, setToast] = useState(null);
@@ -1783,14 +1892,15 @@
         }
       }, [db]);
 
-      const sync = useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd: onLogout });
+      const sync = useCloudSync({ session, db, setDb, notify, onSessionUpdate, onSessionEnd: onLogout, readOnly: session?.user.role === 'investor' });
       const [confirmLogout, setConfirmLogout] = useState(false);
 
-      const hasPermission = (k) => isOwner || !!db.permissions[k];
-      const canAccess = (item) => (!item.ownerOnly || isOwner) && (!item.perm || hasPermission(item.perm));
+      const hasPermission = (k) => isOwner || (isInvestor ? k === 'can_view_finance' : !!db.permissions[k]);
+      const canAccess = (item) => isInvestor ? INVESTOR_TABS.has(item.id) : (!item.ownerOnly || isOwner) && (!item.perm || hasPermission(item.perm));
+      const homeTab = isInvestor ? 'dashboard' : 'pos';
       const activeItem = NAV_ITEMS.find(i => i.id === activeTab) || NAV_ITEMS[1];
-      useEffect(() => { if (!canAccess(activeItem)) setActiveTab('pos'); }, [currentUserId, db.permissions]);
-      const go = (id) => { setActiveTab(id); setSidebarOpen(false); };
+      useEffect(() => { if (!canAccess(activeItem)) setActiveTab(homeTab); }, [currentUserId, db.permissions, currentUser.role]);
+      const go = (id) => { const item = NAV_ITEMS.find(i => i.id === id); if (item && !canAccess(item)) return; setActiveTab(id); setSidebarOpen(false); };
 
       useEffect(() => {
         if (!sidebarOpen) return;
@@ -1857,33 +1967,54 @@
       const myAttendance = db.attendance.find(a => a.user_id === currentUser.id && !a.clock_out && now - new Date(a.clock_in) < 20 * 3600e3)
         || db.attendance.find(a => a.user_id === currentUser.id && a.date === todayKey);
 
-      // Anti-cheat: optionally require the registered store device and/or being within the store's GPS radius
+      const onStoreDevice = (db.business.store_devices || []).includes(deviceId);
+      const attCodeOn = !!(work.attendance_code && db.business.attendance_secret);
+      const [codeAsk, setCodeAsk] = useState(null);
+      const askAttendanceCode = () => new Promise(resolve => setCodeAsk({ resolve }));
+
+      // Anti-cheat: store device, the rotating code from the store screen, and/or the store's GPS radius.
+      // Every record keeps how it was verified so the Bos can check.
       const verifyPresence = async () => {
-        if (work.attendance_store_device && !(db.business.store_devices || []).includes(deviceId)) {
+        const notes = [];
+        if (onStoreDevice) {
+          if (work.attendance_store_device || attCodeOn) notes.push('perangkat toko');
+        } else if (attCodeOn) {
+          const code = await askAttendanceCode();
+          if (code == null) return null;
+          if (!(await attendanceCodeValid(db.business.attendance_secret, code))) {
+            notify('Kode absen salah atau sudah berganti. Lihat kode terbaru di layar kasir toko.', 'warn');
+            return null;
+          }
+          notes.push('kode layar kasir');
+        } else if (work.attendance_store_device) {
           notify('Absen hanya bisa dari perangkat kasir toko. Minta Bos mendaftarkan perangkat ini.', 'warn');
           return null;
         }
-        if (!work.attendance_gps) return { method: work.attendance_store_device ? 'Perangkat toko' : 'Tanpa verifikasi' };
-        setClocking(true);
-        try {
-          const c = await getPosition();
-          const dist = Math.round(haversineM(c.latitude, c.longitude, location.lat, location.lng));
-          if (dist > work.attendance_radius + Math.min(c.accuracy || 0, 100)) {
-            notify(`Anda sekitar ${dist} m dari toko. Absen hanya bisa dalam radius ${work.attendance_radius} m.`, 'warn');
+        if (work.attendance_gps) {
+          setClocking(true);
+          try {
+            const c = await getPosition();
+            const dist = Math.round(haversineM(c.latitude, c.longitude, location.lat, location.lng));
+            if (dist > work.attendance_radius + Math.min(c.accuracy || 0, 100)) {
+              notify(`Anda sekitar ${dist} m dari toko. Absen hanya bisa dalam radius ${work.attendance_radius} m.`, 'warn');
+              return null;
+            }
+            notes.push(`GPS ${dist} m dari toko`);
+          } catch {
+            notify('Lokasi tidak terbaca. Nyalakan GPS dan izinkan akses lokasi untuk absen.', 'warn');
             return null;
-          }
-          return { method: `GPS ${dist} m dari toko${work.attendance_store_device ? ' · perangkat toko' : ''}` };
-        } catch {
-          notify('Lokasi tidak terbaca. Nyalakan GPS dan izinkan akses lokasi untuk absen.', 'warn');
-          return null;
-        } finally { setClocking(false); }
+          } finally { setClocking(false); }
+        }
+        const skew = Math.round(Math.abs(clockOffset) / 60000);
+        if (skew >= 5) notes.push(`jam HP selisih ${skew} menit, dicatat dengan jam server`);
+        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi' };
       };
 
       const clockIn = async () => {
         const v = await verifyPresence();
         if (!v) return;
         const shift = shiftOf(currentUser, work);
-        const rec = { id: generateId('ATT'), user_id: currentUser.id, date: todayKey, shift_id: shift.id, clock_in: new Date().toISOString(), clock_out: null, device_id: deviceId, verify_in: v.method };
+        const rec = { id: generateId('ATT'), user_id: currentUser.id, date: dateKey(new Date(trueNow())), shift_id: shift.id, clock_in: new Date(trueNow()).toISOString(), clock_out: null, device_id: deviceId, verify_in: v.method };
         setDb(prev => ({ ...prev, attendance: [...prev.attendance, rec] }));
         const { lateMin } = attendanceInfo(rec, work, currentUser);
         notify(lateMin ? `Absen masuk ${fmtTime(rec.clock_in)} (${shift.name}) — terlambat ${fmtDuration(lateMin)}.` : `Absen masuk ${shift.name} tercatat ${fmtTime(rec.clock_in)}. Selamat bekerja!`, lateMin ? 'warn' : 'success');
@@ -1893,7 +2024,7 @@
         if (!myAttendance) return;
         const v = await verifyPresence();
         if (!v) return;
-        const outIso = new Date().toISOString();
+        const outIso = new Date(trueNow()).toISOString();
         const { otMin } = attendanceInfo({ ...myAttendance, clock_out: outIso }, work, currentUser);
         const ot = otMin >= work.overtime_min
           ? { id: generateId('OT'), user_id: currentUser.id, date: myAttendance.date, minutes: otMin, status: 'pending', note: 'Lembur otomatis dari absen pulang', decided_by: null }
@@ -1951,7 +2082,9 @@
 
       // Login IDs are unique across stores; the server says whether one is free (null = demo mode, nothing to check)
       const checkUsername = cloud ? (username, id) => apiFetch(`/api/username-available?u=${encodeURIComponent(username)}&id=${encodeURIComponent(id || '')}`, { token: session.token }).then(r => r.available) : null;
-      const pageProps = { db, setDb, notify, currentUser, hasPermission, isOwner, checkUsername };
+      // Investor screens are read-only; any edit attempt explains why instead of silently failing
+      const pageSetDb = isInvestor ? () => notify('Akun investor hanya bisa melihat data.', 'info') : setDb;
+      const pageProps = { db, setDb: pageSetDb, notify, currentUser, hasPermission, isOwner, checkUsername };
       const greetingName = currentUser.name.replace(/^(Hj?\.)\s*/, '').split(' ')[0];
 
       // First sign-in on this device: wait for the store's data before showing the app
@@ -1977,6 +2110,8 @@
       return (
         <div className="relative flex h-full overflow-hidden bg-[#f6f8fc] text-slate-900">
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:shadow-lg">Lewati ke konten</a>
+
+          {codeAsk && <AttendanceCodePrompt onDone={(c) => { codeAsk.resolve(c); setCodeAsk(null); }} />}
 
           {confirmLogout && (
             <Modal title="Keluar dari akun?" desc={`${sync.status.pending} perubahan belum terkirim ke server.`} onClose={() => setConfirmLogout(false)}
@@ -2098,8 +2233,11 @@
                   </button>
                 )}
 
+                {/* Attendance code on the store's own screen */}
+                {attCodeOn && onStoreDevice && <AttendanceCodeChip secret={db.business.attendance_secret} />}
+
                 {/* Attendance quick action for staff */}
-                {!isOwner && (
+                {!isOwner && !isInvestor && (
                   !myAttendance
                     ? <Btn size="sm" icon="login" onClick={clockIn} disabled={clocking} className="min-h-[40px]"><span className="hidden sm:inline">Absen masuk</span><span className="sm:hidden">Absen</span></Btn>
                     : !myAttendance.clock_out
@@ -2158,7 +2296,7 @@
                 </div>
 
                 <button type="button" aria-label={`Keranjang, ${totalCartCount} item`} onClick={() => setShowCartDrawer(true)}
-                  className={cx('relative hidden h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 sm:inline-flex', focusRing)}>
+                  className={cx('relative hidden h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900', !isInvestor && 'sm:inline-flex', focusRing)}>
                   <SvgIcon name="cart" className="h-5 w-5" />
                   {totalCartCount > 0 && <span className="absolute right-0.5 top-0.5 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-sun-400 px-1 text-xs font-bold text-slate-900 ring-2 ring-white tabular" aria-hidden="true">{totalCartCount}</span>}
                 </button>
@@ -2168,8 +2306,8 @@
             <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto outline-none">
               {/* Keyed by user so page-local state (e.g. owner-only tabs) never leaks across a user switch */}
               <div key={currentUserId} className="mx-auto max-w-[1600px] space-y-5 p-4 sm:p-6">
-                {activeTab === 'pos' && <POSMainView {...pageProps} cart={cart} setCart={setCart} isOfflineMode={isOfflineMode} />}
-                {activeTab === 'dashboard' && isOwner && <DashboardOwnerView db={db} go={go} now={now} />}
+                {activeTab === 'pos' && !isInvestor && <POSMainView {...pageProps} cart={cart} setCart={setCart} isOfflineMode={isOfflineMode} />}
+                {activeTab === 'dashboard' && (isOwner || isInvestor) && <DashboardOwnerView db={db} go={go} now={now} />}
                 {activeTab === 'sales_report' && <SalesReportModule {...pageProps} />}
                 {activeTab === 'products' && <ProductsModule {...pageProps} />}
                 {activeTab === 'customers' && <CustomersModule {...pageProps} />}
@@ -2180,18 +2318,22 @@
                 {activeTab === 'incentives' && <IncentivesModule {...pageProps} />}
                 {activeTab === 'employees' && isOwner && <EmployeeManagementModule {...pageProps} />}
                 {activeTab === 'permissions' && isOwner && <PermissionsMatrixModule {...pageProps} />}
-                {activeTab === 'investors' && isOwner && <InvestorsModule {...pageProps} />}
+                {activeTab === 'investors' && (isOwner || isInvestor) && <InvestorsModule {...pageProps} />}
                 {activeTab === 'settings' && isOwner && <SettingsModule {...pageProps} />}
               </div>
             </main>
 
             {/* MOBILE BOTTOM NAV */}
             <nav aria-label="Navigasi cepat" className="z-30 flex flex-shrink-0 items-stretch justify-around border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-              {[
+              {(isInvestor ? [
+                { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+                { id: 'sales_report', label: 'Laporan', icon: 'report' },
+                { id: 'finance', label: 'Laba Rugi', icon: 'finance' }
+              ] : [
                 { id: 'pos', label: 'Kasir', icon: 'cart' },
                 { id: 'sales_report', label: 'Laporan', icon: 'report' },
                 isOwner ? { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' } : { id: 'attendance', label: 'Absensi', icon: 'clock' }
-              ].map(t => (
+              ]).map(t => (
                 <button key={t.id} type="button" aria-current={activeTab === t.id ? 'page' : undefined} onClick={() => go(t.id)}
                   className={cx('flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 text-xs font-semibold', focusRing, activeTab === t.id ? 'text-brand-700' : 'text-slate-500')}>
                   <SvgIcon name={t.icon} className="h-5 w-5" />
@@ -2370,7 +2512,7 @@
       const change = y.revenue ? Math.round(((t.revenue - y.revenue) / y.revenue) * 100) : null;
 
       const lowStock = db.products.filter(p => p.stock <= p.min_stock);
-      const kasir = db.users.filter(u => u.role !== 'owner' && u.status !== 'Nonaktif');
+      const kasir = db.users.filter(u => isStaffRole(u.role) && u.status !== 'Nonaktif');
       const pendingOt = db.overtime.filter(o => o.status === 'pending');
       const openSession = db.cashSessions.find(s => !s.closed_at);
 
@@ -2771,7 +2913,7 @@
       };
 
       const scrollToCart = () => document.getElementById('cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      const panelHeight = 'md:h-[calc(100vh-13rem)] md:min-h-[520px]';
+      const panelHeight = openSession ? 'md:h-[calc(100vh-8rem)] md:min-h-[520px]' : 'md:h-[calc(100vh-13rem)] md:min-h-[520px]';
       const itemCount = cart.reduce((a, c) => a + c.qty, 0);
 
       const renderItem = (prod) => {
@@ -2831,27 +2973,19 @@
             </div>
           )}
 
-          <div className={cx('flex flex-col gap-3 rounded-2xl border p-3.5 sm:flex-row sm:items-center sm:justify-between', openSession ? 'border-slate-200 bg-white' : 'border-amber-300 bg-amber-50')}>
-            <div className="flex items-start gap-3">
-              <span className={cx('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl', openSession ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
-                <SvgIcon name={openSession ? 'unlock' : 'lock'} className="h-5 w-5" />
-              </span>
-              {openSession ? (
-                <div className="text-sm">
-                  <p className="font-semibold text-slate-900">Kasir buka sejak {fmtTime(openSession.opened_at)} · {openSession.opened_by}</p>
-                  <p className="text-slate-600">Modal <span className="tabular">{formatIDR(openSession.opening_cash)}</span> · Uang di laci <span className="font-semibold tabular text-slate-900">{formatIDR(expectedCash(db, openSession))}</span> · Hari ini <span className="tabular">{todaySales.length} nota, {formatIDR(todayRevenue)}</span></p>
-                </div>
-              ) : (
+          {/* Only the "not open yet" reminder sits above the catalog; once open, the details live in the cart panel's "Kas & Riwayat" tab */}
+          {!openSession && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><SvgIcon name="lock" className="h-5 w-5" /></span>
                 <div className="text-sm">
                   <p className="font-semibold text-amber-900">Kasir belum dibuka</p>
                   <p className="text-amber-800">Catat modal awal di laci sebelum menerima pembayaran.</p>
                 </div>
-              )}
+              </div>
+              <Btn icon="unlock" onClick={() => { setOpenAfterSession(false); setSessionModal('open'); }}>Buka kasir</Btn>
             </div>
-            {openSession
-              ? <Btn variant="secondary" icon="lock" onClick={() => setSessionModal('close')}>Tutup kasir</Btn>
-              : <Btn icon="unlock" onClick={() => { setOpenAfterSession(false); setSessionModal('open'); }}>Buka kasir</Btn>}
-          </div>
+          )}
 
           <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-12 lg:gap-5">
             {/* CATALOG */}
@@ -2906,7 +3040,7 @@
             <Card id="cart-panel" aria-label="Panel kasir" className={cx('flex scroll-mt-4 flex-col p-4 sm:p-5 md:sticky md:top-0 md:col-span-5 xl:col-span-4', panelHeight)}>
               <div className="flex items-center gap-2">
                 <div role="tablist" aria-label="Panel kasir" className="grid flex-1 grid-cols-2 rounded-xl bg-slate-100 p-1">
-                  {[['sale', 'Penjualan', itemCount], ['recent', 'Transaksi Terakhir', 0]].map(([v, label, count]) => (
+                  {[['sale', 'Penjualan', itemCount], ['recent', 'Kas & Riwayat', 0]].map(([v, label, count]) => (
                     <button key={v} type="button" role="tab" aria-selected={cartTab === v} onClick={() => setCartTab(v)}
                       className={cx('inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg px-1.5 text-sm font-semibold transition-colors', focusRing,
                         cartTab === v ? 'bg-white text-brand-800 shadow-sm' : 'text-slate-600 hover:text-slate-900')}>
@@ -2925,6 +3059,19 @@
 
               {cartTab === 'recent' ? (
                 <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                  {openSession && (
+                    <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="flex items-center gap-1.5 font-semibold text-slate-900"><SvgIcon name="unlock" className="h-4 w-4 text-emerald-700" />Kasir buka {fmtTime(openSession.opened_at)} · {openSession.opened_by}</p>
+                        <Btn variant="secondary" size="sm" icon="lock" onClick={() => setSessionModal('close')}>Tutup kasir</Btn>
+                      </div>
+                      <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                        <div><dt className="text-slate-500">Modal</dt><dd className="font-semibold tabular text-slate-900">{formatIDR(openSession.opening_cash)}</dd></div>
+                        <div><dt className="text-slate-500">Uang di laci</dt><dd className="font-semibold tabular text-slate-900">{formatIDR(expectedCash(db, openSession))}</dd></div>
+                        <div><dt className="text-slate-500">Hari ini</dt><dd className="font-semibold tabular text-slate-900">{todaySales.length} nota · {formatIDR(todayRevenue)}</dd></div>
+                      </dl>
+                    </div>
+                  )}
                   <p className="text-xs text-slate-500">{isOwner ? '20 transaksi terakhir di toko.' : '20 transaksi terakhir yang Anda layani.'} Transaksi lama ada di Laporan Penjualan → Detail.</p>
                   <div className="mt-2 flex-1 overflow-y-auto md:pr-1">
                     {recentSales.length === 0 ? <EmptyState icon="receipt" title="Belum ada transaksi" /> : (
@@ -4308,7 +4455,7 @@
       };
       const removeLeave = (l) => { setDb(prev => ({ ...prev, leaves: (prev.leaves || []).filter(x => x.id !== l.id) })); notify('Catatan ketidakhadiran dihapus.', 'info'); };
       const work = db.business.work;
-      const staff = db.users.filter(u => u.role !== 'owner' && u.status !== 'Nonaktif');
+      const staff = db.users.filter(u => isStaffRole(u.role) && u.status !== 'Nonaktif');
       const storeDevices = db.business.store_devices || [];
       const pendingCount = db.overtime.filter(o => o.status === 'pending').length;
 
@@ -4362,7 +4509,8 @@
 
       const ruleSummary = [
         work.attendance_gps && `wajib berada ≤ ${work.attendance_radius} m dari toko`,
-        work.attendance_store_device && 'hanya dari perangkat kasir toko'
+        work.attendance_code && 'memakai kode dari layar kasir (kecuali di perangkat toko)',
+        !work.attendance_code && work.attendance_store_device && 'hanya dari perangkat kasir toko'
       ].filter(Boolean).join(' dan ');
 
       // ---------- Staff view ----------
@@ -4574,9 +4722,24 @@
                     : <Btn variant="secondary" size="sm" icon="device" onClick={() => { setDb(prev => ({ ...prev, business: { ...prev.business, store_devices: [...storeDevices, deviceId] } })); notify('Perangkat ini didaftarkan sebagai perangkat kasir toko.'); }}>Daftarkan perangkat ini</Btn>}
                 </div>
               </div>
-              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-                Setelah server online aktif, perlindungan bisa ditambah: QR absen yang berganti tiap 30 detik di layar kasir (harus dipindai di tempat), foto selfie saat absen, dan deteksi aplikasi lokasi palsu. Setiap absen juga mencatat cara verifikasinya agar Bos bisa mengecek.
-              </p>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p id="att-code" className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">Kode absen dari layar kasir <Badge tone="green">Disarankan</Badge></p>
+                    <p className="text-sm text-slate-600">Perangkat kasir toko menampilkan kode 6 angka yang berganti tiap 30 detik. Karyawan yang absen dari HP sendiri wajib memasukkan kode itu, jadi harus benar-benar ada di toko untuk melihatnya.</p>
+                  </div>
+                  <Switch checked={!!work.attendance_code} labelledBy="att-code"
+                    onChange={v => setDb(prev => ({ ...prev, business: { ...prev.business, attendance_secret: prev.business.attendance_secret || newSecret(), work: { ...prev.business.work, attendance_code: v } } }))} />
+                </div>
+                {work.attendance_code && storeDevices.length === 0 && (
+                  <p className="mt-3 rounded-lg bg-amber-50 p-2.5 text-sm text-amber-900 ring-1 ring-amber-200">Belum ada perangkat toko. Buka aplikasi di HP/tablet kasir lalu tekan <b>Daftarkan perangkat ini</b> di atas, supaya kodenya tampil di sana.</p>
+                )}
+              </div>
+              <ul className="space-y-1 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                <li>• Paling aman: nyalakan <b>Kode absen</b> dan <b>GPS</b> sekaligus.</li>
+                <li>• Jam absen memakai jam server, jadi mengubah jam di HP tidak berpengaruh.</li>
+                <li>• Setiap absen mencatat cara verifikasinya (kolom keterangan di rekap), sehingga Bos bisa mengecek.</li>
+              </ul>
             </div>
           </Card>
         </div>
@@ -4778,7 +4941,7 @@
       const f = computeFinancials(db, from, to);
       const months = Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return dateKey(d).slice(0, 7); });
       const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date));
-      const payroll = db.users.filter(u => u.role !== 'owner').reduce((a, u) => a + monthlyRecap(db, u, month).total, 0);
+      const payroll = db.users.filter(u => isStaffRole(u.role)).reduce((a, u) => a + monthlyRecap(db, u, month).total, 0);
 
       const exportCsv = () => {
         downloadCsv(`Laba_Rugi_${month}.csv`, [
@@ -5106,7 +5269,7 @@
     const promoStatus = (p, today = dateKey()) => !p.active ? { label: 'Nonaktif', tone: 'slate' } : p.end < today ? { label: 'Selesai', tone: 'slate' } : p.start > today ? { label: 'Terjadwal', tone: 'blue' } : { label: 'Berjalan', tone: 'green' };
 
     function IncentivesModule({ db, setDb, notify, isOwner }) {
-      const kasir = db.users.filter(u => u.role !== 'owner');
+      const kasir = db.users.filter(u => isStaffRole(u.role));
       const [modal, setModal] = useState(null);
       const [coupon, setCoupon] = useState({ code: '', type: 'percent', val: 10, min_spend: 50000 });
       const [inc, setInc] = useState({ employee: kasir[0]?.name || '', target: 10000000, bonus: 200000 });
@@ -5473,10 +5636,18 @@
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="Email" error={errors.email}><input type="email" value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} autoComplete="off" /></Field>
                   <Field label="Nomor WhatsApp" error={waError(form.phone)}><WaInput value={form.phone || ''} onChange={v => setForm({ ...form, phone: v })} /></Field>
-                  <Field label="Peran" hint={form.role === 'owner' ? 'Bos punya akses penuh ke semua menu.' : 'Akses diatur di menu Hak Akses.'}><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className={inputCls}>{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+                  <Field label="Peran" hint={form.role === 'owner' ? 'Bos punya akses penuh ke semua menu.' : form.role === 'investor' ? 'Hanya bisa melihat Dashboard, Laporan Penjualan, Laba Rugi, dan bagi hasilnya sendiri.' : 'Akses diatur di menu Hak Akses.'}><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className={inputCls}>{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
                   <Field label="Status"><select value={form.status || 'Aktif'} onChange={e => setForm({ ...form, status: e.target.value })} className={inputCls}><option>Aktif</option><option>Nonaktif</option></select></Field>
                 </div>
-                {form.role !== 'owner' && (
+                {form.role === 'investor' && (
+                  <Field label="Tautkan ke data investor" hint={db.investors.length ? 'Investor ini hanya melihat porsi dan riwayat bagi hasil miliknya.' : 'Belum ada data investor. Tambahkan dulu di menu Portal Investor.'}>
+                    <select value={form.investor_id || ''} onChange={e => setForm({ ...form, investor_id: e.target.value })} className={inputCls}>
+                      <option value="">— Pilih investor —</option>
+                      {db.investors.map(i => <option key={i.id} value={i.id}>{i.name} · {i.profit_share}%</option>)}
+                    </select>
+                  </Field>
+                )}
+                {isStaffRole(form.role) && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <Field label="Gaji pokok"><MoneyInput value={form.base_salary} onChange={v => setForm({ ...form, base_salary: v })} /></Field>
                     <Field label="Shift"><select value={form.shift_id || work.shifts[0].id} onChange={e => setForm({ ...form, shift_id: e.target.value })} className={inputCls}>{work.shifts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
@@ -5574,6 +5745,50 @@
       };
 
       const periodValue = (p) => p.period_type === 'yearly' ? String(p.year) : `${p.year}-${pad(p.month)}`;
+      const viewer = currentUser.role === 'investor';
+      if (viewer) {
+        const me = db.investors.find(i => i.id === currentUser.investor_id);
+        if (!me) return (
+          <div className="space-y-5">
+            <PageHeader title="Bagi Hasil Saya" desc="Porsi dan riwayat bagi hasil Anda." />
+            <EmptyState icon="investors" title="Akun belum ditautkan" desc="Minta Bos membuka menu Karyawan, memilih akun Anda, lalu memilih data investor yang sesuai." />
+          </div>
+        );
+        const freq = me.frequency || 'monthly';
+        const mine = payouts.filter(p => p.investor_id === me.id).sort((a, b) => b.date.localeCompare(a.date));
+        return (
+          <div className="space-y-5">
+            <PageHeader title="Bagi Hasil Saya" desc={`Porsi ${me.profit_share}% dari laba bersih, dibagi ${FREQ_LABEL[freq].toLowerCase()}.`} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <StatCard label={freq === 'yearly' ? `Estimasi bagian ${year} sejauh ini` : 'Estimasi bagian bulan ini'} value={formatIDR(Math.round(baseFor(me) * me.profit_share / 100))} sub={`Laba bersih ${freq === 'yearly' ? 'tahun ini' : 'bulan ini'}: ${formatIDR(baseFor(me))}`} icon="investors" highlight />
+              <StatCard label="Porsi saya" value={`${me.profit_share}%`} sub={`Dibagi ${FREQ_LABEL[freq].toLowerCase()}`} icon="users" />
+              <StatCard label="Total sudah diterima" value={formatIDR(paidOf(me.id))} sub={`${mine.length} pembayaran`} icon="dollar" tone="amber" />
+            </div>
+            <Card className="p-4">
+              <h3 className="text-base font-bold text-slate-900">Riwayat bagi hasil</h3>
+              {mine.length === 0 ? <p className="mt-2 text-sm text-slate-500">Belum ada pembayaran tercatat.</p> : (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[480px] text-left text-sm">
+                    <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr><th scope="col" className="py-1.5 pr-3">Periode</th><th scope="col" className="py-1.5 pr-3">Tanggal bayar</th><th scope="col" className="py-1.5 pr-3">Metode</th><th scope="col" className="py-1.5 text-right">Nominal</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {mine.map(p => (
+                        <tr key={p.id}>
+                          <td className="py-2 pr-3 font-medium text-slate-900">{payoutPeriodLabel(p)}</td>
+                          <td className="py-2 pr-3 text-slate-700">{fmtDateShort(p.date)}</td>
+                          <td className="py-2 pr-3 text-slate-600">{p.method}{p.note ? ` · ${p.note}` : ''}</td>
+                          <td className="py-2 text-right font-semibold tabular">{formatIDR(p.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        );
+      }
       const duplicate = payout && payouts.some(x => x.investor_id === payout.investor_id && x.period_type === payout.period_type && x.period === periodValue(payout));
 
       const savePayout = () => {
@@ -5888,7 +6103,7 @@
 
           <Section title="Pembayaran" desc="QRIS dan rekening yang ditampilkan ke pelanggan." icon="qr">
             <ImageUpload label="Gambar QRIS toko" value={form.qris_image} onChange={v => setForm(f => ({ ...f, qris_image: v }))} mode="contain" aspect="aspect-[3/4]"
-              options={{ size: 900, type: 'image/png' }} hint="Unggah foto atau screenshot QRIS dari bank/e-wallet Anda. Gambar tidak dipotong agar tetap bisa dipindai." />
+              options={{ size: 900, type: 'image/png', maxBytes: 400 * 1024 }} hint="Unggah foto atau screenshot QRIS dari bank/e-wallet Anda. Gambar tidak dipotong agar tetap bisa dipindai." />
             <Field label="NMID QRIS"><input value={form.qris_nmid} onChange={set('qris_nmid')} className={cx(inputCls, 'font-mono')} /></Field>
             <div>
               <p className="text-sm font-medium text-slate-700">Rekening bank</p>
