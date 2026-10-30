@@ -125,7 +125,7 @@
     const minutesOfIso = (iso) => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes(); };
     const fmtTime = (iso) => iso ? minToHHMM(minutesOfIso(iso)) : '—';
     const fmtDuration = (mins) => { const h = Math.floor(mins / 60), m = Math.round(mins % 60); return h ? (m ? `${h}j ${m}m` : `${h} jam`) : `${m} menit`; };
-    const fmtDateLong = (d) => d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const fmtDateLong = (d) => d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(/^Minggu/, 'Ahad');
     const fmtDateShort = (key) => new Date(key + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
     const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
     const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
@@ -143,6 +143,77 @@
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     };
+
+    // Excel reports: a styled .xlsx (title band, coloured headers, Rupiah format, totals).
+    // ExcelJS loads on first use; without internet the same tables are saved as CSV.
+    // A cell is a value, or { v, t } to format one cell differently from its column.
+    const XLS_FMT = { money: '"Rp"#,##0;[Red]-"Rp"#,##0', int: '#,##0', dec: '#,##0.0', pct: '0%' };
+    const xlsVal = (c) => c && typeof c === 'object' && 'v' in c ? c.v : c;
+    async function downloadReport(filename, { title, subtitle, sheets }) {
+      try {
+        if (!window.ExcelJS) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js');
+        const wb = new window.ExcelJS.Workbook();
+        wb.creator = APP_NAME; wb.created = new Date();
+        const line = { style: 'thin', color: { argb: 'FFE2E8F0' } };
+        const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+        sheets.forEach(sh => {
+          const ws = wb.addWorksheet(sh.name, { views: [{ showGridLines: false }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+          const span = Math.max(2, ...sh.tables.map(t => t.columns.length));
+          ws.columns = Array.from({ length: span }, (_, i) => ({ width: Math.max(12, ...sh.tables.map(t => t.columns[i]?.width || 0)) }));
+          const band = (r, text, font, argb, height) => {
+            ws.mergeCells(r, 1, r, span);
+            const c = ws.getCell(r, 1);
+            c.value = text; c.font = font; c.fill = fill(argb); c.alignment = { vertical: 'middle', indent: 1 };
+            ws.getRow(r).height = height;
+          };
+          band(1, title, { bold: true, size: 16, color: { argb: 'FFFFFFFF' } }, 'FF1A4FE6', 30);
+          band(2, subtitle, { size: 11, color: { argb: 'FFDBE6FF' } }, 'FF1440C8', 20);
+          let r = 4;
+          sh.tables.forEach(t => {
+            if (t.heading) { const c = ws.getCell(r, 1); c.value = t.heading; c.font = { bold: true, size: 12, color: { argb: 'FF0F172A' } }; r++; }
+            const head = ws.getRow(r);
+            t.columns.forEach((col, i) => {
+              const c = head.getCell(i + 1);
+              c.value = col.header; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = fill('FF1A4FE6');
+              c.alignment = { vertical: 'middle', horizontal: col.t ? 'right' : 'left', wrapText: true };
+              c.border = { top: line, bottom: line, left: line, right: line };
+            });
+            head.height = 22; r++;
+            const put = (cells, argb, bold) => {
+              const row = ws.getRow(r);
+              t.columns.forEach((col, i) => {
+                const raw = cells[i], c = row.getCell(i + 1);
+                const type = (raw && typeof raw === 'object' && raw.t) || col.t;
+                c.value = xlsVal(raw) ?? '';
+                if (type && typeof c.value === 'number') c.numFmt = XLS_FMT[type];
+                c.alignment = { vertical: 'top', horizontal: type && typeof c.value === 'number' ? 'right' : 'left', wrapText: !type };
+                c.border = { bottom: line, left: line, right: line };
+                if (argb) c.fill = fill(argb);
+                if (bold) c.font = { bold: true };
+              });
+              r++;
+            };
+            t.rows.forEach((cells, i) => put(cells, i % 2 ? 'FFF6F8FC' : null));
+            if (!t.rows.length) put(['Tidak ada data'], null);
+            if (t.total) put(t.total, 'FFEEF4FF', true);
+            r++;
+          });
+        });
+        const blob = new Blob([await wb.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename + '.xlsx';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        return 'xlsx';
+      } catch {
+        downloadCsv(filename + '.csv', [[title], [subtitle], [], ...sheets.flatMap(sh => sh.tables.flatMap(t => [
+          ...(t.heading ? [[t.heading]] : []), t.columns.map(c => c.header), ...t.rows.map(row => row.map(xlsVal)), ...(t.total ? [t.total.map(xlsVal)] : []), []
+        ]))]);
+        return 'csv';
+      }
+    }
+    const reportDone = (how, what) => how === 'xlsx' ? `${what} diunduh (Excel).` : `${what} diunduh sebagai CSV (Excel rapi butuh internet).`;
 
     // Resizes uploads before storing: a raw phone photo is 3–10 MB, the store only needs ~100 KB.
     // 'cover' crops to a square (menu photos), 'contain' keeps the whole image (QRIS must stay scannable).
@@ -598,7 +669,7 @@
       }, []);
 
       return (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 animate-fade-in sm:items-center sm:p-4"
+        <div className="fixed inset-0 z-50 !m-0 flex items-end justify-center bg-slate-900/60 animate-fade-in sm:items-center sm:p-4"
           onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
           <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
             className={cx('flex max-h-[92vh] max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-2xl outline-none animate-pop-in sm:rounded-2xl', MODAL_SIZES[size], className)}>
@@ -989,11 +1060,13 @@
     // Variants left without a stock number share the product's stock instead.
     const hasVariantStock = (p) => (p?.variants || []).some(v => v.stock !== '' && v.stock != null);
     const variantStockSum = (variants) => variants.reduce((a, v) => a + (parseInt(v.stock, 10) || 0), 0);
+    // Products sold without stock (made to order, services) are never out of stock or low
+    const isLowStock = (p) => !p.no_stock && p.stock <= p.min_stock;
     const findVariant = (p, vid) => vid && (p?.variants || []).find(v => v.id === vid);
     // Stock that limits one cart line: its variant's own stock, or the product's
     function lineStock(products, lineId) {
       const p = products.find(x => x.id === productIdOf({ id: lineId }));
-      if (!p) return Infinity;
+      if (!p || p.no_stock) return Infinity;
       const v = hasVariantStock(p) && findVariant(p, variantIdOf({ id: lineId }));
       return v ? parseInt(v.stock, 10) || 0 : p.stock;
     }
@@ -1006,6 +1079,7 @@
     }
     // Adds (or with a negative delta takes) stock for one sold line, keeping the product total equal to its variants
     function changeLineStock(p, vid, delta) {
+      if (p.no_stock) return p;
       const v = hasVariantStock(p) && findVariant(p, vid);
       if (!v) return { ...p, stock: Math.max(0, p.stock + delta) };
       const variants = p.variants.map(x => x.id === vid ? { ...x, stock: Math.max(0, (parseInt(x.stock, 10) || 0) + delta) } : x);
@@ -1194,6 +1268,17 @@
         document.head.appendChild(s);
       });
     }
+    // Phones open the share sheet with a message; otherwise WhatsApp shows the file's blob: address as the text.
+    // Computers (or a refused share) download the file.
+    async function savePdf(doc, filename, text) {
+      const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
+      if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+        try { await navigator.share({ files: [file], text }); return 'shared'; }
+        catch (e) { if (e?.name === 'AbortError') return 'cancelled'; }
+      }
+      doc.save(filename);
+      return 'saved';
+    }
     async function copyText(text) {
       try { await navigator.clipboard.writeText(text); return true; } catch {
         const t = document.createElement('textarea');
@@ -1265,7 +1350,7 @@
         { id: 'sales_report', label: 'Laporan Penjualan', icon: 'report' },
         { id: 'products', label: 'Katalog & Stok', icon: 'products' },
         { id: 'customers', label: 'Pelanggan', icon: 'customers' },
-        { id: 'purchases', label: 'Supplier / Pemasok', icon: 'purchases', ownerOnly: true }
+        { id: 'purchases', label: 'Supplier / Pemasok', icon: 'purchases', perm: 'can_manage_suppliers' }
       ]},
       { section: 'Tim', items: [
         { id: 'attendance', label: 'Absensi & Lembur', icon: 'clock' },
@@ -1311,9 +1396,9 @@
     // Each staff role has its own switches; the Bos changes them in Hak Akses
     const PERMISSION_ROLES = ['kasir', 'supervisor', 'kepala_toko'];
     const DEFAULT_PERMISSIONS = {
-      kasir: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false },
-      supervisor: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: true, can_view_finance: false },
-      kepala_toko: { can_add_product: true, can_edit_product: true, can_delete_product: true, can_give_discount: true, can_void_sale: true, can_view_finance: true }
+      kasir: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false, can_manage_suppliers: false },
+      supervisor: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: true, can_view_finance: false, can_manage_suppliers: false },
+      kepala_toko: { can_add_product: true, can_edit_product: true, can_delete_product: true, can_give_discount: true, can_void_sale: true, can_view_finance: true, can_manage_suppliers: true }
     };
     // Older stores kept one set of switches for every employee; each role starts from that set
     function normalizePermissions(val = {}) {
@@ -2422,7 +2507,7 @@
       };
 
       // ---------- Live notifications ----------
-      const lowStock = db.products.filter(p => p.stock <= p.min_stock);
+      const lowStock = db.products.filter(isLowStock);
       const pendingOt = db.overtime.filter(o => o.status === 'pending');
       const pendingVoids = allSalesOf(db).filter(s => s.status !== 'void' && s.void_request?.status === 'pending');
       const myNotifs = isOwner ? [] : (db.staff_notifications || []).filter(n => n.user_id === currentUser.id).slice(0, 15);
@@ -3453,7 +3538,7 @@
       const m = computeFinancials(db, monthStart, today);
       const change = y.revenue ? Math.round(((t.revenue - y.revenue) / y.revenue) * 100) : null;
 
-      const lowStock = db.products.filter(p => p.stock <= p.min_stock);
+      const lowStock = db.products.filter(isLowStock);
       const kasir = db.users.filter(u => isStaffRole(u.role) && u.status !== 'Nonaktif');
       const pendingOt = db.overtime.filter(o => o.status === 'pending');
       const openSession = db.cashSessions.find(s => !s.closed_at);
@@ -3461,7 +3546,7 @@
       const trend = useMemo(() => Array.from({ length: 7 }, (_, i) => {
         const k = addDays(today, i - 6);
         const f = computeFinancials(db, k, k);
-        return { day: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'short' }), omzet: f.revenue, laba: f.grossProfit };
+        return { day: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'short' }).replace(/^Min$/, 'Ahad'), omzet: f.revenue, laba: f.grossProfit };
       }), [db.sales, db.offlineQueue, today]);
 
       const topProducts = useMemo(() => {
@@ -3878,12 +3963,13 @@
 
       const renderItem = (prod) => {
         const inCart = qtyInCart(prod.id);
-        const out = prod.stock <= 0;
-        const low = !out && prod.stock <= prod.min_stock;
+        const out = !prod.no_stock && prod.stock <= 0;
+        const low = !out && isLowStock(prod);
         const info = menuPriceInfo(prod, promos);
-        const controls = <MenuControls name={prod.name} inCart={inCart} disabled={out || inCart >= prod.stock} onAdd={() => addToCart(prod)} onRemove={() => removeOneOf(prod.id)} />;
+        const controls = <MenuControls name={prod.name} inCart={inCart} disabled={out || (!prod.no_stock && inCart >= prod.stock)} onAdd={() => addToCart(prod)} onRemove={() => removeOneOf(prod.id)} />;
         const isBest = bestSellers.has(prod.id);
-        const addLabel = `Tambah ${prod.name}${isBest ? ' (terlaris)' : ''}, ${formatIDR(info.price)}${info.discounted ? `, diskon ${info.pct}%` : ''}, stok ${prod.stock}`;
+        const addLabel = `Tambah ${prod.name}${isBest ? ' (terlaris)' : ''}, ${formatIDR(info.price)}${info.discounted ? `, diskon ${info.pct}%` : ''}${prod.no_stock ? '' : `, stok ${prod.stock}`}`;
+        const stockText = prod.no_stock ? null : out ? <span className="font-semibold text-rose-600">Stok habis</span> : low ? <span className="font-semibold text-amber-700">Sisa {prod.stock}</span> : `Stok ${prod.stock}`;
 
         if (view === 'list') {
           return (
@@ -3892,7 +3978,7 @@
                 <ProductThumb product={prod} className="h-12 w-12 flex-shrink-0 rounded-lg" textClass="text-sm" />
                 <span className="min-w-0">
                   <span className="flex items-center gap-1 text-sm font-semibold text-slate-900">{isBest && <StarIcon className="h-4 w-4 flex-shrink-0 text-sun-500" />}<span className="truncate">{prod.name}</span></span>
-                  <span className="block text-xs text-slate-500">{prod.sku} · {out ? <span className="font-semibold text-rose-600">Stok habis</span> : low ? <span className="font-semibold text-amber-700">Sisa {prod.stock}</span> : `Stok ${prod.stock}`}{info.discounted && <span className="ml-1 font-semibold text-rose-600">· −{info.pct}%</span>}</span>
+                  <span className="block text-xs text-slate-500">{prod.sku}{stockText && <> · {stockText}</>}{info.discounted && <span className="ml-1 font-semibold text-rose-600">· −{info.pct}%</span>}</span>
                 </span>
               </button>
               <PriceTag info={info} className="items-end text-right" />
@@ -3909,11 +3995,10 @@
                   <ProductThumb product={prod} textClass="text-3xl" className="h-full w-full transition duration-300 group-hover:scale-105 motion-reduce:transform-none" />
                   {info.discounted && <span className="absolute left-2 top-2 rounded-md bg-rose-600 px-1.5 py-0.5 text-xs font-bold text-white">−{info.pct}%</span>}
                   {out && <span className="absolute inset-0 flex items-center justify-center bg-white/75 text-sm font-bold text-rose-700">Stok habis</span>}
-                  {low && <span className="absolute right-2 top-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-900">Sisa {prod.stock}</span>}
                   {isBest && <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-sun-400 px-1.5 py-0.5 text-xs font-bold text-slate-900 shadow-sm"><StarIcon className="h-3.5 w-3.5" />Terlaris</span>}
                 </div>
                 <p className="mt-2 line-clamp-2 px-1 text-sm font-semibold leading-5 text-slate-900">{prod.name}</p>
-                {prod.variants?.length > 0 && <p className="px-1 text-xs text-slate-500">{prod.variants.length} varian</p>}
+                {(stockText || prod.variants?.length > 0) && <p className="px-1 text-xs text-slate-500 tabular">{prod.variants?.length > 0 && `${prod.variants.length} varian`}{stockText && prod.variants?.length > 0 && ' · '}{stockText}</p>}
               </button>
               {/* Wraps so the price is never truncated when the minus control appears */}
               <div className="mt-auto flex flex-wrap items-end justify-between gap-x-1 gap-y-1.5 px-1 pt-2">
@@ -4175,7 +4260,7 @@
           </div>
 
           {variantPick && (
-            <Modal title={`Pilih varian ${variantPick.name}`} desc={`Stok ${variantPick.stock} ${variantPick.unit}`} size="sm" onClose={() => setVariantPick(null)}>
+            <Modal title={`Pilih varian ${variantPick.name}`} desc={variantPick.no_stock ? 'Tanpa stok' : `Stok ${variantPick.stock} ${variantPick.unit}`} size="sm" onClose={() => setVariantPick(null)}>
               <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {variantPick.variants.map(v => {
                   const own = hasVariantStock(variantPick);
@@ -4411,6 +4496,17 @@
       });
       const valid = scoped.filter(isValidSale);
       const voided = scoped.filter(s => !isValidSale(s));
+      // Kasbon paid back in this period, listed under the method the customer paid with
+      const cashierName = db.users.find(u => u.id === cashierFilter)?.name;
+      const repayments = (db.debt_payments || []).filter(p => {
+        if (p.kind !== 'customer') return false;
+        const k = dateKey(new Date(p.date));
+        if (k < from || k > to) return false;
+        if (cashierFilter === 'me' && p.by_id !== currentUser.id && p.by !== currentUser.name) return false;
+        if (cashierFilter !== 'all' && cashierFilter !== 'me' && p.by_id !== cashierFilter && p.by !== cashierName) return false;
+        return methodFilter === 'all' || (p.method || 'cash') === methodFilter;
+      }).map(p => ({ id: p.id, repay: true, date: p.date, receipt_no: 'Pelunasan kasbon', cashier: p.by || '-', customer_name: db.customers.find(c => c.id === p.party_id)?.name || '-', payment_method: p.method || 'cash', total: p.amount, items: [] }));
+      const repaid = repayments.reduce((a, p) => a + p.total, 0);
 
       const gross = valid.reduce((a, s) => a + s.total, 0);
       const net = valid.reduce((a, s) => a + s.total - (s.tax || 0), 0);
@@ -4446,8 +4542,11 @@
 
       const byMethod = Object.keys(PAYMENT_LABELS).map(m => {
         const list = valid.filter(s => s.payment_method === m);
-        return { m, count: list.length, total: list.reduce((a, s) => a + s.total, 0) };
+        const back = repayments.filter(p => p.payment_method === m);
+        const repay = back.reduce((a, p) => a + p.total, 0);
+        return { m, count: list.length + back.length, total: list.reduce((a, s) => a + s.total, 0) + repay, repay };
       }).filter(x => x.count);
+      const methodSum = byMethod.reduce((a, x) => a + x.total, 0) || 1;
 
       const byCashier = db.users.map(u => {
         const list = valid.filter(s => s.cashier_id === u.id);
@@ -4456,18 +4555,55 @@
 
       const kasbonStatus = useMemo(() => kasbonStatusMap(db), [db.sales, db.offlineQueue, db.customers]);
       const qs = search.trim().toLowerCase();
-      const txList = sortBy((showVoid ? scoped : valid)
+      const txList = sortBy([...(showVoid ? scoped : valid), ...repayments]
         .filter(s => !qs || s.receipt_no.toLowerCase().includes(qs) || s.customer_name.toLowerCase().includes(qs) || s.items.some(it => it.name.toLowerCase().includes(qs))),
         txSort, { date: s => new Date(s.date).getTime(), total: s => s.total });
 
-      const exportReport = () => {
-        downloadCsv(`Laporan_Penjualan_${from}_${to}.csv`, [
-          [`Laporan Penjualan ${db.business.name}`], [`Periode ${from} s/d ${to}`], [],
-          ['Waktu', 'No Nota', 'Kasir', 'Pelanggan', 'Metode', 'Subtotal', 'Diskon', 'Voucher', 'Pajak', 'Total', 'Status', 'Item'],
-          ...txList.map(s => [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], s.subtotal, s.discount || 0, s.coupon_code || '', s.tax || 0, s.total, s.status === 'void' ? 'Batal' : 'Selesai', s.items.map(it => `${it.name} x${it.qty}`).join('; ')]),
-          [], ['Produk', 'Qty', 'Omzet', 'Porsi'], ...sortedProducts.map(p => [p.name, p.qty, p.omzet, `${Math.round(p.omzet / productTotal * 100)}%`])
-        ]);
-        notify('Laporan penjualan diunduh (CSV, bisa dibuka di Excel).');
+      const [exporting, setExporting] = useState(false);
+      const exportReport = async () => {
+        setExporting(true);
+        const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => a.date.localeCompare(b.date));
+        const expTotal = expenses.reduce((a, e) => a + (Number(e.amount) || 0), 0);
+        const int = (v) => ({ v, t: 'int' });
+        const period = singleDay ? fmtDateShort(from) : `${fmtDateShort(from)} – ${fmtDateShort(to)}`;
+        const how = await downloadReport(`Laporan_Penjualan_${from}_${to}`, {
+          title: `Laporan Penjualan · ${db.business.name}`,
+          subtitle: `Periode ${period} · dibuat ${fmtDateTime(new Date().toISOString())} oleh ${currentUser.name}`,
+          sheets: [
+            { name: 'Ringkasan', tables: [
+              { heading: 'Ringkasan', columns: [{ header: 'Keterangan', width: 34 }, { header: 'Nilai', width: 20, t: 'money' }], rows: [
+                ['Penjualan (termasuk pajak)', gross], ['Penjualan bersih', net], ['Diskon diberikan', discount],
+                ['Jumlah transaksi', int(valid.length)], ['Item terjual', int(itemsSold)], ['Rata-rata per transaksi', avg],
+                ...(isOwner ? [['HPP', hpp], ['Laba kotor', net - hpp]] : []),
+                ['Pelunasan kasbon diterima', repaid], ['Pengeluaran / biaya operasional', expTotal]
+              ] },
+              { heading: 'Metode pembayaran', columns: [{ header: 'Metode' }, { header: 'Total', t: 'money' }, { header: 'Jumlah', width: 12, t: 'int' }, { header: 'Termasuk pelunasan kasbon', width: 26, t: 'money' }],
+                rows: byMethod.map(x => [PAYMENT_LABELS[x.m], x.total, x.count, x.repay]), total: ['Total', byMethod.reduce((a, x) => a + x.total, 0), byMethod.reduce((a, x) => a + x.count, 0), repaid] },
+              { heading: 'Per kasir', columns: [{ header: 'Kasir' }, { header: 'Total', t: 'money' }, { header: 'Nota', t: 'int' }],
+                rows: byCashier.map(x => [x.u.name, x.total, x.count]) }
+            ] },
+            { name: 'Transaksi', tables: [{
+              columns: [{ header: 'Waktu', width: 20 }, { header: 'No. Nota', width: 22 }, { header: 'Kasir', width: 18 }, { header: 'Pelanggan', width: 20 }, { header: 'Metode', width: 12 },
+                { header: 'Subtotal', width: 15, t: 'money' }, { header: 'Diskon', width: 13, t: 'money' }, { header: 'Voucher', width: 12 }, { header: 'Pajak', width: 13, t: 'money' }, { header: 'Total', width: 15, t: 'money' }, { header: 'Status', width: 16 }, { header: 'Item', width: 50 }],
+              rows: txList.map(s => s.repay
+                ? [fmtDateTime(s.date), 'Pelunasan kasbon', s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], '', '', '', '', s.total, 'Pelunasan kasbon', '']
+                : [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], s.subtotal, s.discount || 0, s.coupon_code || '', s.tax || 0, s.total, s.status === 'void' ? 'Batal' : 'Selesai', s.items.map(it => `${it.name} x${it.qty}`).join('; ')]),
+              total: ['Total', '', '', '', '', '', '', '', '', txList.filter(s => s.status !== 'void').reduce((a, s) => a + s.total, 0), '', '']
+            }] },
+            { name: 'Produk', tables: [{
+              columns: [{ header: 'Produk', width: 34 }, { header: 'Terjual', width: 12, t: 'int' }, { header: 'Omzet', width: 18, t: 'money' }, { header: 'Porsi', width: 10, t: 'pct' }],
+              rows: sortedProducts.map(p => [p.name, p.qty, p.omzet, p.omzet / productTotal]),
+              total: ['Total', itemsSold, productRows.reduce((a, p) => a + p.omzet, 0), 1]
+            }] },
+            { name: 'Pengeluaran', tables: [{
+              columns: [{ header: 'Tanggal', width: 16 }, { header: 'Kategori', width: 20 }, { header: 'Catatan', width: 36 }, { header: 'Dicatat oleh', width: 20 }, { header: 'Nominal', width: 16, t: 'money' }],
+              rows: expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '', e.by || '', Number(e.amount) || 0]),
+              total: ['Total', '', '', '', expTotal]
+            }] }
+          ]
+        });
+        setExporting(false);
+        notify(reportDone(how, 'Laporan penjualan'));
       };
 
       const canVoid = hasPermission('can_void_sale');
@@ -4518,9 +4654,9 @@
           <PageHeader title="Laporan Penjualan" desc="Semua transaksi toko. Pilih kasir untuk melihat penjualan satu orang."
             actions={<>
               {canRecordExpense && <Btn variant="secondary" icon="plus" onClick={() => setExpForm(newExpense())}>Catat pengeluaran</Btn>}
-              <Btn variant="secondary" icon="download" onClick={exportReport} disabled={!scoped.length}>Export Excel (CSV)</Btn>
+              <Btn variant="secondary" icon="download" onClick={exportReport} disabled={exporting || (!scoped.length && !repayments.length)}>{exporting ? 'Membuat…' : 'Export Excel'}</Btn>
             </>} />
-          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} />}
+          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} expenses={db.expenses} />}
 
           {pendingRequests.length > 0 && (
             <Card className="border-amber-300 bg-amber-50/40 p-4">
@@ -4602,7 +4738,8 @@
                   {byMethod.map(x => (
                     <li key={x.m}>
                       <div className="flex justify-between text-sm"><span className="font-medium text-slate-800">{PAYMENT_LABELS[x.m]} <span className="text-slate-500">· {x.count}</span></span><span className="font-semibold tabular">{formatIDR(x.total)}</span></div>
-                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.round(x.total / gross * 100)}%` }} /></div>
+                      {x.repay > 0 && <p className="text-xs text-slate-500">Termasuk pelunasan kasbon {formatIDR(x.repay)}</p>}
+                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.round(x.total / methodSum * 100)}%` }} /></div>
                     </li>
                   ))}
                 </ul>
@@ -4686,7 +4823,7 @@
                     <tr key={s.id} className={cx('hover:bg-slate-50', s.status === 'void' && 'text-slate-400')}>
                       <td className="whitespace-nowrap px-4 py-2.5 tabular">{singleDay ? fmtTime(s.date) : fmtDateTime(s.date)}</td>
                       <td className="px-4 py-2.5">
-                        <span className={cx('font-mono text-xs font-semibold', s.status === 'void' && 'line-through')}>{s.receipt_no}</span>
+                        {s.repay ? <Badge tone="green">Pelunasan kasbon</Badge> : <span className={cx('font-mono text-xs font-semibold', s.status === 'void' && 'line-through')}>{s.receipt_no}</span>}
                         {s.status === 'void' && <Badge tone="rose" className="ml-2">Batal</Badge>}
                         {s.status !== 'void' && s.void_request?.status === 'pending' && <Badge tone="amber" className="ml-2">Diajukan batal</Badge>}
                         {s.status !== 'void' && s.void_request?.status === 'rejected' && <Badge tone="slate" className="ml-2">Batal ditolak</Badge>}
@@ -4696,7 +4833,7 @@
                       <td className="px-4 py-2.5">{s.customer_name}</td>
                       <td className="px-4 py-2.5">{(() => { const k = s.payment_method === 'bayar_nanti' ? kasbonStatus.get(s.id) : null; return <Badge tone={k === 'paid' ? 'green' : s.payment_method === 'bayar_nanti' ? 'amber' : 'slate'}>{s.payment_method === 'bayar_nanti' ? (k === 'paid' ? 'Kasbon · lunas' : k === 'partial' ? 'Kasbon · sebagian' : 'Kasbon') : PAYMENT_LABELS[s.payment_method]}</Badge>; })()}</td>
                       <td className="px-4 py-2.5 text-right font-semibold tabular">{formatIDR(s.total)}</td>
-                      <td className="px-4 py-2.5 text-right"><Btn variant="ghost" size="sm" onClick={() => setDetail(s)} aria-label={`Detail ${s.receipt_no}`}>Detail</Btn></td>
+                      <td className="px-4 py-2.5 text-right">{!s.repay && <Btn variant="ghost" size="sm" onClick={() => setDetail(s)} aria-label={`Detail ${s.receipt_no}`}>Detail</Btn>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4825,7 +4962,7 @@
         setNewCat(null);
       };
       const setVariant = (i, k, v) => setForm(f => ({ ...f, variants: f.variants.map((x, j) => j === i ? { ...x, [k]: v } : x) }));
-      const variantStock = hasVariantStock(form);
+      const variantStock = !form.no_stock && hasVariantStock(form);
       const shownStock = variantStock ? variantStockSum(form.variants) : form.stock;
       // A new variant row scrolls into view with its name field ready to type
       const variantListRef = useRef(null);
@@ -4845,7 +4982,7 @@
       // Both filter counts follow the search, so "Semua (5)" means 5 products match what was typed
       const q = search.trim().toLowerCase();
       const searched = db.products.filter(p => !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
-      const lowSearched = searched.filter(p => p.stock <= p.min_stock);
+      const lowSearched = searched.filter(isLowStock);
       const rows = stockFilter === 'low' ? lowSearched : searched;
       const nowStamp = () => { const d = new Date(); return `${dateKey(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
@@ -4855,21 +4992,21 @@
         const clean = {
           name: form.name.trim(), category: form.category,
           buy_price: Number(form.buy_price) || 0, sell_price: Number(form.sell_price) || 0, promo_price: promoPrice,
-          min_stock: parseInt(form.min_stock, 10) || 0,
+          min_stock: parseInt(form.min_stock, 10) || 0, no_stock: !!form.no_stock,
           unit: form.unit || 'Pcs', img: form.img || '',
           variants: (form.variants || []).filter(v => v.name.trim()).map(v => ({
             id: v.id || generateId('VAR'), name: v.name.trim(), price: Number(v.price) || 0,
             buy_price: Number(v.buy_price) > 0 ? Number(v.buy_price) : '',
-            stock: v.stock === '' || v.stock == null ? '' : Math.max(0, parseInt(v.stock, 10) || 0)
+            stock: form.no_stock || v.stock === '' || v.stock == null ? '' : Math.max(0, parseInt(v.stock, 10) || 0)
           }))
         };
-        clean.stock = hasVariantStock(clean) ? variantStockSum(clean.variants) : parseInt(form.stock, 10) || 0;
+        clean.stock = clean.no_stock ? 0 : hasVariantStock(clean) ? variantStockSum(clean.variants) : parseInt(form.stock, 10) || 0;
         if (editing === 'new') {
           const added = { id: 'p-' + Date.now(), sku: skuTrim || autoSku(), ...clean };
-          setDb(prev => ({ ...prev, products: [added, ...prev.products], stockHistory: [{ id: generateId('SH'), date: nowStamp(), sku: added.sku, name: added.name, qtyChange: `+${added.stock}`, type: 'Stok awal produk baru', user: currentUser.name }, ...prev.stockHistory] }));
+          setDb(prev => ({ ...prev, products: [added, ...prev.products], stockHistory: added.no_stock ? prev.stockHistory : [{ id: generateId('SH'), date: nowStamp(), sku: added.sku, name: added.name, qtyChange: `+${added.stock}`, type: 'Stok awal produk baru', user: currentUser.name }, ...prev.stockHistory] }));
           notify(`${added.name} ditambahkan ke katalog.`);
         } else {
-          const diff = clean.stock - editing.stock;
+          const diff = clean.no_stock || editing.no_stock ? 0 : clean.stock - editing.stock;
           setDb(prev => ({
             ...prev,
             products: prev.products.map(p => p.id === editing.id ? { ...p, ...clean, sku: skuTrim || p.sku } : p),
@@ -4947,13 +5084,14 @@
                         </td>
                         <td className={cx('px-4 py-3 text-right tabular', margin < 20 ? 'text-amber-700' : 'text-slate-700')}>{margin}%</td>
                         <td className="px-4 py-3">
-                          {p.stock <= 0 ? <Badge tone="rose">Habis</Badge>
+                          {p.no_stock ? <Badge tone="slate">Tanpa stok</Badge>
+                            : p.stock <= 0 ? <Badge tone="rose">Habis</Badge>
                             : p.stock <= p.min_stock ? <Badge tone="amber"><span className="tabular">{p.stock}</span> {p.unit} · menipis</Badge>
                             : <span className="text-slate-800 tabular">{p.stock} {p.unit}</span>}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right">
                           {canEdit && <>
-                            <Btn variant="ghost" size="sm" icon="plus" onClick={() => setRestock({ product: p, qty: 0, note: 'Restock' })} aria-label={`Tambah stok ${p.name}`}>Stok</Btn>
+                            {!p.no_stock && <Btn variant="ghost" size="sm" icon="plus" onClick={() => setRestock({ product: p, qty: 0, note: 'Restock' })} aria-label={`Tambah stok ${p.name}`}>Stok</Btn>}
                             <Btn variant="ghost" size="sm" icon="edit" onClick={() => open(p)} aria-label={`Edit ${p.name}`}>Edit</Btn>
                           </>}
                         </td>
@@ -5021,8 +5159,19 @@
                   </div>
                   {promoError ? <span className="mt-1 block text-xs font-medium text-rose-600" role="alert">{promoError}</span> : <span className="mt-1 block text-xs text-slate-500">{promoHint}</span>}
                 </div>
-                <Field label="Jumlah stok" hint={variantStock ? 'Otomatis dari stok varian.' : null} className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={shownStock} onChange={set('stock')} disabled={variantStock} className={cx(inputCls, 'tabular disabled:bg-slate-100 disabled:text-slate-600')} /></Field>
-                <Field label="Stok minimum" hint="Peringatan di bawah angka ini." className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.min_stock} onChange={set('min_stock')} className={cx(inputCls, 'tabular')} /></Field>
+                <div className="sm:col-span-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor="product-stock" className="text-sm font-medium text-slate-700">Jumlah stok</label>
+                    <button type="button" aria-pressed={!!form.no_stock} onClick={() => setForm(f => ({ ...f, no_stock: !f.no_stock }))}
+                      className={cx('-my-1 inline-flex min-h-[32px] items-center gap-1 rounded-lg border px-2 text-xs font-semibold transition-colors', form.no_stock ? 'border-brand-600 bg-brand-50 text-brand-800' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50', focusRing)}>
+                      {form.no_stock && <SvgIcon name="check" className="h-3.5 w-3.5" />}Tanpa stok
+                    </button>
+                  </div>
+                  <input id="product-stock" type="number" min="0" inputMode="numeric" value={form.no_stock ? '' : shownStock} onChange={set('stock')} disabled={variantStock || !!form.no_stock} placeholder={form.no_stock ? 'Tidak dihitung' : undefined}
+                    className={cx(inputCls, 'mt-1.5 tabular disabled:bg-slate-100 disabled:text-slate-600')} />
+                  {(form.no_stock || variantStock) && <span className="mt-1 block text-xs text-slate-500">{form.no_stock ? 'Bisa dijual terus, stok tidak berkurang.' : 'Otomatis dari stok varian.'}</span>}
+                </div>
+                <Field label="Stok minimum" hint={form.no_stock ? null : 'Peringatan di bawah angka ini.'} className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.no_stock ? '' : form.min_stock} onChange={set('min_stock')} disabled={!!form.no_stock} className={cx(inputCls, 'tabular disabled:bg-slate-100')} /></Field>
                 <Field label="Satuan" className="sm:col-span-2"><input value={form.unit} onChange={set('unit')} className={inputCls} placeholder="Pcs / Cup / Kg" /></Field>
                 <div className="sm:col-span-6">
                   <div className="flex items-center justify-between gap-3">
@@ -5039,7 +5188,7 @@
                           <Field label="Nama varian" className="col-span-2 sm:col-span-1"><input value={v.name} maxLength={30} onChange={e => setVariant(i, 'name', e.target.value)} placeholder="cth. Besar" className={inputCls} /></Field>
                           <Field label="Harga jual"><MoneyInput value={v.price} onChange={(val) => setVariant(i, 'price', val)} /></Field>
                           <Field label="HPP"><MoneyInput value={v.buy_price} onChange={(val) => setVariant(i, 'buy_price', val)} placeholder={formatNumberWithDots(form.buy_price || 0)} /></Field>
-                          <Field label="Stok"><input type="number" min="0" inputMode="numeric" value={v.stock ?? ''} onChange={e => setVariant(i, 'stock', e.target.value)} placeholder="—" className={cx(inputCls, 'tabular')} /></Field>
+                          <Field label="Stok"><input type="number" min="0" inputMode="numeric" value={form.no_stock ? '' : v.stock ?? ''} onChange={e => setVariant(i, 'stock', e.target.value)} disabled={!!form.no_stock} placeholder="—" className={cx(inputCls, 'tabular disabled:bg-slate-100')} /></Field>
                           <IconBtn icon="trash" label={`Hapus varian ${v.name || i + 1}`} iconClass="h-4 w-4" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== i) }))} className="justify-self-end text-slate-500 hover:bg-rose-50 hover:text-rose-600" />
                         </li>
                       ))}
@@ -5250,17 +5399,32 @@
       const [form, setForm] = useState(null);
       const [newSup, setNewSup] = useState({ name: '', phone: '', address: '' });
       const [tried, setTried] = useState(false);
+      const [confirmDel, setConfirmDel] = useState(false);
 
       const itemCategories = [...new Set([...db.categories.filter(c => c !== 'Semua'), ...NON_MENU_CATEGORIES])];
       const locked = editing && editing !== 'new' && editing.stock_applied;
 
       const open = (po) => {
-        setEditing(po); setTried(false);
+        setEditing(po); setTried(false); setConfirmDel(false);
         const sup = db.suppliers.find(x => x.id === (po === 'new' ? db.suppliers[0]?.id : po.supplier_id));
         setNewSup({ name: sup?.name || '', phone: sup?.phone || '', address: sup?.address || '' });
         setForm(po === 'new'
           ? { supplier_id: db.suppliers[0]?.id || '__new', date: dateKey(), status: 'Draft PO', payment: 'lunas', due_date: addDays(dateKey(), 14), note: '', items: [newPoItem()] }
           : { ...po, due_date: po.due_date || addDays(po.date, 14), items: po.items.map(it => ({ ...it, key: generateId('IT'), product_id: it.product_id || '' })) });
+      };
+
+      // Goods already received from the order leave the menu stock again
+      const removePo = () => {
+        const po = editing;
+        const stamp = `${dateKey()} ${pad(new Date().getHours())}:${pad(new Date().getMinutes())}`;
+        setDb(prev => ({
+          ...prev,
+          products: po.stock_applied ? prev.products.map(p => { const qty = po.items.filter(i => i.product_id === p.id).reduce((a, i) => a + i.qty, 0); return qty && !p.no_stock ? { ...p, stock: Math.max(0, p.stock - qty) } : p; }) : prev.products,
+          stockHistory: po.stock_applied ? [...po.items.filter(i => i.product_id).map(i => ({ id: generateId('SH'), date: stamp, sku: prev.products.find(p => p.id === i.product_id)?.sku || i.category, name: i.name, qtyChange: `-${i.qty} ${i.unit}`, type: `Pesanan ${po.po_number} dihapus`, user: currentUser.name })), ...prev.stockHistory] : prev.stockHistory,
+          purchases: prev.purchases.filter(p => p.id !== po.id)
+        }));
+        notify(`Pesanan ${po.po_number} dihapus.`, 'info');
+        setEditing(null);
       };
 
       const updateItem = (key, patch) => setForm(f => ({ ...f, items: f.items.map(it => it.key === key ? { ...it, ...patch } : it) }));
@@ -5293,7 +5457,7 @@
         setDb(prev => {
           let products = prev.products, history = prev.stockHistory;
           if (receiveNow) {
-            products = products.map(p => { const qty = po.items.filter(i => i.product_id === p.id).reduce((a, i) => a + i.qty, 0); return qty ? { ...p, stock: p.stock + qty } : p; });
+            products = products.map(p => { const qty = po.items.filter(i => i.product_id === p.id).reduce((a, i) => a + i.qty, 0); return qty && !p.no_stock ? { ...p, stock: p.stock + qty } : p; });
             history = [...po.items.map(i => ({ id: generateId('SH'), date: stamp, sku: prev.products.find(p => p.id === i.product_id)?.sku || i.category, name: i.name, qtyChange: `+${i.qty} ${i.unit}`, type: `Penerimaan ${po.po_number} · ${po.supplier}`, user: currentUser.name })), ...history];
           }
           const saved = { ...po, stock_applied: po.stock_applied || receiveNow };
@@ -5328,7 +5492,7 @@
           <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
             <div className="flex-1">
               <span className="text-sm font-medium text-slate-700">Cari</span>
-              <SearchInput id="po-search" value={poSearch} onChange={setPoSearch} placeholder="Nama supplier, no. PO, atau barang…" className="mt-1.5" />
+              <SearchInput id="po-search" value={poSearch} onChange={setPoSearch} placeholder="Nama supplier, no. pesanan, atau barang…" className="mt-1.5" />
             </div>
             <Field label="Bulan" className="w-full sm:w-64">
               <select value={poMonth} onChange={e => setPoMonth(e.target.value)} className={inputCls}>
@@ -5339,14 +5503,14 @@
           </Card>
           {sorted.length > 0 && (
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <StatCard label={poMonth === 'all' ? 'Total pembelian' : `Pembelian ${monthLabel(poMonth)}`} value={formatIDR(sorted.reduce((a, po) => a + po.total, 0))} sub={`${sorted.length} PO dari ${bySupplier.length} supplier`} icon="purchases" />
+              <StatCard label={poMonth === 'all' ? 'Total pembelian' : `Pembelian ${monthLabel(poMonth)}`} value={formatIDR(sorted.reduce((a, po) => a + po.total, 0))} sub={`${sorted.length} pesanan dari ${bySupplier.length} supplier`} icon="purchases" />
               <Card className="p-4 lg:col-span-2">
                 <p className="text-sm font-semibold text-slate-900">Supplier di periode ini</p>
                 <ul className="mt-2 flex flex-wrap gap-2">
                   {bySupplier.map(x => (
                     <li key={x.name} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                       <p className="font-semibold text-slate-900">{x.name}</p>
-                      <p className="text-xs text-slate-600">{x.count} PO · {formatIDR(x.total)}{x.debt > 0 && <span className="font-medium text-rose-600"> · hutang {formatIDR(x.debt)}</span>}</p>
+                      <p className="text-xs text-slate-600">{x.count} pesanan · {formatIDR(x.total)}{x.debt > 0 && <span className="font-medium text-rose-600"> · hutang {formatIDR(x.debt)}</span>}</p>
                     </li>
                   ))}
                 </ul>
@@ -5357,7 +5521,7 @@
             <div className="overflow-x-auto">
               <table className="w-full min-w-[820px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  <tr><th scope="col" className="px-4 py-3">No. PO</th><th scope="col" className="px-4 py-3">Supplier</th><th scope="col" className="px-4 py-3">Barang</th><th scope="col" className="px-4 py-3 text-right">Nilai</th><th scope="col" className="px-4 py-3">Pembayaran</th><th scope="col" className="px-4 py-3">Status</th><th scope="col" className="px-4 py-3"><span className="sr-only">Aksi</span></th></tr>
+                  <tr><th scope="col" className="px-4 py-3">No. Pesanan</th><th scope="col" className="px-4 py-3">Supplier</th><th scope="col" className="px-4 py-3">Barang</th><th scope="col" className="px-4 py-3 text-right">Nilai</th><th scope="col" className="px-4 py-3">Pembayaran</th><th scope="col" className="px-4 py-3">Status</th><th scope="col" className="px-4 py-3"><span className="sr-only">Aksi</span></th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {sorted.map(po => (
@@ -5390,13 +5554,17 @@
                   ))}
                 </tbody>
               </table>
-              {sorted.length === 0 && <EmptyState icon="purchases" title={db.purchases.length ? 'Tidak ada pembelian yang cocok' : 'Belum ada purchase order'} desc={db.purchases.length ? 'Coba ubah bulan atau kata pencarian.' : undefined} />}
+              {sorted.length === 0 && <EmptyState icon="purchases" title={db.purchases.length ? 'Tidak ada pembelian yang cocok' : 'Belum ada pesanan barang'} desc={db.purchases.length ? 'Coba ubah bulan atau kata pencarian.' : undefined} />}
             </div>
           </Card>
 
           {editing && form && (
             <Modal title={editing === 'new' ? 'Buat pesanan barang' : `Pesanan ${editing.po_number}`} size="xl" onClose={() => setEditing(null)}
-              footer={<><p className="flex-1 self-center text-sm text-slate-600">Total <span className="text-base font-bold text-slate-900 tabular">{formatIDR(locked ? editing.total : total)}</span></p><Btn variant="secondary" onClick={() => setEditing(null)}>Batal</Btn><Btn onClick={save}>{form.status === 'Diterima Penuh' && !(editing !== 'new' && editing.stock_applied) ? 'Simpan & terima barang' : 'Simpan'}</Btn></>}>
+              footer={confirmDel ? <>
+                <p className="flex-1 self-center text-sm font-medium text-rose-700">Hapus pesanan ini?{editing.stock_applied ? ' Stok yang sudah masuk dari pesanan ini ikut dikurangi.' : ''}</p>
+                <Btn variant="secondary" onClick={() => setConfirmDel(false)}>Batal</Btn>
+                <Btn variant="danger" onClick={removePo}>Ya, hapus</Btn>
+              </> : <>{editing !== 'new' && <IconBtn icon="trash" label={`Hapus pesanan ${editing.po_number}`} className="text-rose-600 hover:bg-rose-50" onClick={() => setConfirmDel(true)} />}<p className="flex-1 self-center text-sm text-slate-600">Total <span className="text-base font-bold text-slate-900 tabular">{formatIDR(locked ? editing.total : total)}</span></p><Btn variant="secondary" onClick={() => setEditing(null)}>Batal</Btn><Btn onClick={save}>{form.status === 'Diterima Penuh' && !(editing !== 'new' && editing.stock_applied) ? 'Simpan & terima barang' : 'Simpan'}</Btn></>}>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <Field label="Supplier" className="sm:col-span-2">
@@ -5557,13 +5725,18 @@
         setRewardForm(null);
       };
 
-      const exportPayroll = () => {
-        downloadCsv(`Rekap_Gaji_${month}.csv`, [
-          [`Rekap Absensi & Gaji ${db.business.name}`, monthLabel(month)], [],
-          ['Karyawan', 'Shift', 'Hadir (hari)', 'Terlambat (hari)', 'Sakit', 'Izin', 'Alpha', 'Jam kerja', 'Lembur disetujui (jam)', 'Upah lembur', 'Reward', 'Gaji pokok', 'Total dibayar'],
-          ...staff.map(u => { const r = monthlyRecap(db, u, month); return [u.name, shiftOf(u, work).name, r.present, r.lateDays, r.sick, r.permit, r.alpha, (r.worked / 60).toFixed(1), (r.otMinutes / 60).toFixed(1), r.otPay, r.reward, u.base_salary, r.total]; })
-        ]);
-        notify('Rekap gaji diunduh (CSV).');
+      const exportPayroll = async () => {
+        const rows = staff.map(u => { const r = monthlyRecap(db, u, month); return [u.name, shiftOf(u, work).name, r.present, r.lateDays, r.sick, r.permit, r.alpha, r.worked / 60, r.otMinutes / 60, r.otPay, r.reward, u.base_salary || 0, r.total]; });
+        const sum = (i) => rows.reduce((a, row) => a + (Number(row[i]) || 0), 0);
+        const how = await downloadReport(`Rekap_Gaji_${month}`, {
+          title: `Rekap Absensi & Gaji · ${db.business.name}`, subtitle: monthLabel(month),
+          sheets: [{ name: 'Rekap Gaji', tables: [{
+            columns: [{ header: 'Karyawan', width: 22 }, { header: 'Shift', width: 14 }, { header: 'Hadir (hari)', t: 'int' }, { header: 'Terlambat (hari)', width: 14, t: 'int' }, { header: 'Sakit', width: 8, t: 'int' }, { header: 'Izin', width: 8, t: 'int' }, { header: 'Alpha', width: 8, t: 'int' },
+              { header: 'Jam kerja', t: 'dec' }, { header: 'Lembur disetujui (jam)', width: 14, t: 'dec' }, { header: 'Upah lembur', width: 15, t: 'money' }, { header: 'Reward', width: 15, t: 'money' }, { header: 'Gaji pokok', width: 15, t: 'money' }, { header: 'Total dibayar', width: 17, t: 'money' }],
+            rows, total: ['Total', '', '', '', '', '', '', '', '', sum(9), sum(10), sum(11), sum(12)]
+          }] }]
+        });
+        notify(reportDone(how, 'Rekap gaji'));
       };
 
       const checkMyDistance = async () => {
@@ -6020,7 +6193,10 @@
     // =====================================================================
     const EXPENSE_CATEGORIES = ['Bahan Baku', 'Gaji & Bonus', 'Listrik & Air', 'Sewa & Kebersihan', 'Transportasi', 'Perawatan', 'Lainnya'];
 
-    function ExpenseModal({ form, setForm, onSave, onClose }) {
+    function ExpenseModal({ form, setForm, onSave, onClose, expenses = [] }) {
+      // The day's expenses so staff can see what was already bought
+      const dayList = expenses.filter(e => e.date === form.date);
+      const dayTotal = dayList.reduce((a, e) => a + (Number(e.amount) || 0), 0);
       return (
         <Modal title="Catat pengeluaran" onClose={onClose}
           footer={<><span className="flex-1" /><Btn variant="secondary" onClick={onClose}>Batal</Btn><Btn onClick={onSave} disabled={!form.amount}>Simpan</Btn></>}>
@@ -6031,6 +6207,31 @@
             </div>
             <Field label="Nominal"><MoneyInput autoFocus value={form.amount} onChange={v => setForm({ ...form, amount: v })} /></Field>
             <Field label="Catatan"><input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} className={inputCls} placeholder="cth. beli gula 5 kg" /></Field>
+            <section aria-labelledby="exp-day-title" className="border-t border-slate-200 pt-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <h4 id="exp-day-title" className="text-sm font-bold text-slate-900">Pengeluaran {form.date === dateKey() ? 'hari ini' : fmtDateShort(form.date)}</h4>
+                {dayList.length > 0 && <span className="text-sm font-bold text-slate-900 tabular">{formatIDR(dayTotal)}</span>}
+              </div>
+              {dayList.length === 0 ? <p className="mt-1 text-sm text-slate-500">Belum ada pengeluaran yang dicatat.</p> : (
+                <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full min-w-[420px] text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
+                      <tr><th scope="col" className="px-3 py-2 font-semibold">Kategori</th><th scope="col" className="px-3 py-2 font-semibold">Catatan</th><th scope="col" className="px-3 py-2 font-semibold">Dicatat</th><th scope="col" className="px-3 py-2 text-right font-semibold">Nominal</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dayList.map(e => (
+                        <tr key={e.id}>
+                          <td className="px-3 py-2 text-slate-800">{e.category}</td>
+                          <td className="px-3 py-2 text-slate-600">{e.note || '—'}</td>
+                          <td className="px-3 py-2 text-slate-600">{e.by || '—'}</td>
+                          <td className="px-3 py-2 text-right font-medium text-slate-900 tabular">{formatIDR(e.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </div>
         </Modal>
       );
@@ -6050,13 +6251,25 @@
       const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date));
       const payroll = db.users.filter(u => isStaffRole(u.role)).reduce((a, u) => a + monthlyRecap(db, u, month).total, 0);
 
-      const exportCsv = () => {
-        downloadCsv(`Laba_Rugi_${month}.csv`, [
-          ['Laporan Laba Rugi', db.business.name, monthLabel(month)], [],
-          ['Penjualan bersih', f.revenue], ['HPP', f.hpp], ['Laba kotor', f.grossProfit], ['Biaya operasional', f.expenses], ['Laba bersih', f.netProfit], ['Pajak terkumpul (disetor)', f.taxCollected], [],
-          ['Tanggal', 'Kategori', 'Catatan', 'Nominal'], ...expenses.map(e => [e.date, e.category, e.note, e.amount])
-        ]);
-        notify('Laporan laba rugi diunduh (CSV).');
+      const exportCsv = async () => {
+        const byCat = EXPENSE_CATEGORIES.map(c => [c, expenses.filter(e => e.category === c).reduce((a, e) => a + (Number(e.amount) || 0), 0)]).filter(x => x[1]);
+        const how = await downloadReport(`Laba_Rugi_${month}`, {
+          title: `Laporan Laba Rugi · ${db.business.name}`, subtitle: monthLabel(month),
+          sheets: [
+            { name: 'Laba Rugi', tables: [
+              { columns: [{ header: 'Keterangan', width: 34 }, { header: 'Nilai', width: 20, t: 'money' }], rows: [
+                ['Penjualan bersih', f.revenue], ['HPP', f.hpp], ['Laba kotor', f.grossProfit], ['Biaya operasional', f.expenses], ['Pajak terkumpul (disetor)', f.taxCollected]
+              ], total: ['Laba bersih', f.netProfit] },
+              { heading: 'Biaya operasional per kategori', columns: [{ header: 'Kategori' }, { header: 'Nominal', t: 'money' }], rows: byCat, total: ['Total', byCat.reduce((a, x) => a + x[1], 0)] }
+            ] },
+            { name: 'Pengeluaran', tables: [{
+              columns: [{ header: 'Tanggal', width: 16 }, { header: 'Kategori', width: 20 }, { header: 'Catatan', width: 36 }, { header: 'Dicatat oleh', width: 20 }, { header: 'Nominal', width: 16, t: 'money' }],
+              rows: expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '', e.by || '', Number(e.amount) || 0]),
+              total: ['Total', '', '', '', expenses.reduce((a, e) => a + (Number(e.amount) || 0), 0)]
+            }] }
+          ]
+        });
+        notify(reportDone(how, 'Laporan laba rugi'));
       };
 
       // Builds a real PDF file and downloads it directly (no print dialog)
@@ -6123,7 +6336,7 @@
           <PageHeader title="Laporan Laba Rugi" desc="Penjualan, HPP, dan biaya operasional per bulan."
             actions={<>
               {currentUser.role !== 'investor' && <Btn variant="secondary" icon="plus" onClick={() => setExpForm(newExpense())}>Catat pengeluaran</Btn>}
-              <Btn variant="secondary" icon="download" onClick={exportCsv}>Excel (CSV)</Btn>
+              <Btn variant="secondary" icon="download" onClick={exportCsv}>Excel</Btn>
               <Btn variant="dark" icon="download" onClick={downloadPdf} disabled={pdfBusy}>{pdfBusy ? 'Membuat PDF…' : 'Unduh PDF'}</Btn>
             </>} />
           <Field label="Bulan" className="w-full sm:w-64"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
@@ -6159,7 +6372,7 @@
             </Card>
           </div>
 
-          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} />}
+          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} expenses={db.expenses} />}
         </div>
       );
     }
@@ -6210,7 +6423,7 @@
       const confirm = () => {
         if (amountError) return;
         const { kind, entity } = paying;
-        const record = { id: generateId('PAY'), kind, party_id: entity.id, amount, method, date: new Date().toISOString(), by: currentUser.name, remaining: Math.max(0, debt - amount) };
+        const record = { id: generateId('PAY'), kind, party_id: entity.id, amount, method, date: new Date().toISOString(), by: currentUser.name, by_id: currentUser.id, remaining: Math.max(0, debt - amount) };
         setDb(prev => {
           if (kind === 'supplier') {
             // Pay the oldest due purchase orders first
@@ -6255,11 +6468,11 @@
           if (pay.allocations?.length) {
             const y = doc.lastAutoTable.finalY + 34;
             doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30);
-            doc.text('Rincian PO yang dibayar', 40, y);
+            doc.text('Rincian pesanan yang dibayar', 40, y);
             doc.setFont('helvetica', 'normal');
             doc.autoTable({
               startY: y + 12, margin: { left: 40, right: 40 },
-              head: [['No. PO', 'Jatuh tempo', 'Total PO', 'Dibayar', 'Sisa']],
+              head: [['No. Pesanan', 'Jatuh tempo', 'Total pesanan', 'Dibayar', 'Sisa']],
               foot: [[{ content: 'Total dibayar', colSpan: 3 }, pdfMoney(pay.amount), '']],
               footStyles: { fillColor: [238, 244, 255], textColor: 30, fontStyle: 'bold', halign: 'right' },
               body: pay.allocations.map(a => [a.po_number, a.due_date ? fmtDateShort(a.due_date) : '-', pdfMoney(a.total), pdfMoney(a.amount), pdfMoney(a.left)]),
@@ -6268,8 +6481,9 @@
           }
           doc.setFontSize(8); doc.setTextColor(140);
           doc.text(`Dibuat dengan ${APP_NAME} · ${fmtDateTime(new Date().toISOString())}`, 40, 820);
-          doc.save(`Invoice_${supplier.name.replace(/\s+/g, '_')}_${invNo}.pdf`);
-          notify('Invoice PDF diunduh.');
+          const tag = `Invoice_${supplier.name.trim().replace(/\s+/g, '_')}_${invNo}`;
+          const how = await savePdf(doc, `${tag}.pdf`, `Terima Kasih sudah bermitra dengan ${db.business.name} #${tag}`);
+          if (how === 'saved') notify('Invoice PDF diunduh.');
         } catch {
           notify('Invoice gagal dibuat. Pastikan ada internet untuk pertama kali, lalu coba lagi.', 'warn');
         } finally { setPdfFor(null); }
@@ -6319,7 +6533,7 @@
                       <div>
                         <p className="font-semibold text-slate-900">{s.name}</p>
                         <p className="text-sm text-slate-600">{s.phone ? `HP ${s.phone}` : 'Belum ada nomor HP'}{s.address ? ` · ${s.address}` : ''}</p>
-                        {s.debt > 0 && <p className="mt-0.5 flex items-center gap-2 text-sm text-slate-500">{s.open.length} PO belum lunas · jatuh tempo terdekat {fmtDateShort(s.nextDue)}{overdue && <Badge tone="rose">Terlambat</Badge>}</p>}
+                        {s.debt > 0 && <p className="mt-0.5 flex items-center gap-2 text-sm text-slate-500">{s.open.length} pesanan belum lunas · jatuh tempo terdekat {fmtDateShort(s.nextDue)}{overdue && <Badge tone="rose">Terlambat</Badge>}</p>}
                       </div>
                       <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-1.5">
                         <span className={cx('text-base font-bold tabular', s.debt > 0 ? 'text-rose-600' : 'text-slate-400')}>{formatIDR(s.debt)}</span>
@@ -6415,7 +6629,7 @@
                     ))}
                   </div>
                 </div>
-                {paying.kind === 'supplier' && <p className="text-xs text-slate-500">Pembayaran dialokasikan ke PO dengan jatuh tempo paling awal.</p>}
+                {paying.kind === 'supplier' && <p className="text-xs text-slate-500">Pembayaran dialokasikan ke pesanan dengan jatuh tempo paling awal.</p>}
               </div>
             </Modal>
           )}
@@ -6436,6 +6650,7 @@
       const [promo, setPromo] = useState(null);
       const [confirmDelCoupon, setConfirmDelCoupon] = useState(false);
       const [confirmDelInc, setConfirmDelInc] = useState(false);
+      const [confirmDelPromo, setConfirmDelPromo] = useState(false);
       const [productQuery, setProductQuery] = useState('');
       const ym = dateKey().slice(0, 7);
       const codeTaken = db.coupons.some(c => c.code === coupon.code && c.id !== coupon.id);
@@ -6480,6 +6695,10 @@
         setDb(prev => ({ ...prev, seasonal_promos: clean.id ? prev.seasonal_promos.map(p => p.id === clean.id ? clean : p) : [{ ...clean, id: generateId('SP') }, ...(prev.seasonal_promos || [])] }));
         notify(`Promo "${clean.name}" disimpan.`); setPromo(null);
       };
+      const deletePromo = () => {
+        setDb(prev => ({ ...prev, seasonal_promos: (prev.seasonal_promos || []).filter(p => p.id !== promo.id) }));
+        notify(`Promo "${promo.name}" dihapus.`, 'info'); setPromo(null);
+      };
       const toggleCoupon = (id) => setDb(prev => ({ ...prev, coupons: prev.coupons.map(c => c.id === id ? { ...c, active: !c.active } : c) }));
       const togglePromo = (id) => setDb(prev => ({ ...prev, seasonal_promos: prev.seasonal_promos.map(p => p.id === id ? { ...p, active: !p.active } : p) }));
       const toggleProduct = (id) => setPromo(p => ({ ...p, product_ids: p.product_ids.includes(id) ? p.product_ids.filter(x => x !== id) : [...p.product_ids, id] }));
@@ -6511,7 +6730,7 @@
                         <p className="truncate text-xs text-slate-500">{names}</p>
                       </div>
                       {isOwner && <div className="flex items-center gap-2">
-                        <Btn variant="ghost" size="sm" icon="edit" onClick={() => { setProductQuery(''); setPromo({ ...p }); }}>Edit</Btn>
+                        <Btn variant="ghost" size="sm" icon="edit" onClick={() => { setProductQuery(''); setConfirmDelPromo(false); setPromo({ ...p }); }} aria-label={`Edit atau hapus ${p.name}`}>Edit</Btn>
                         <Switch checked={p.active} onChange={() => togglePromo(p.id)} label={`Aktifkan ${p.name}`} />
                       </div>}
                     </li>
@@ -6574,7 +6793,16 @@
 
           {promo && (
             <Modal title={promo.id ? 'Edit promo musiman' : 'Promo musiman baru'} size="lg" onClose={() => setPromo(null)}
-              footer={<><span className="flex-1" /><Btn variant="secondary" onClick={() => setPromo(null)}>Batal</Btn><Btn onClick={savePromo} disabled={promoInvalid}>Simpan promo</Btn></>}>
+              footer={confirmDelPromo ? <>
+                <p className="flex-1 self-center text-sm font-medium text-rose-700">Hapus promo ini? Harga di kasir kembali normal.</p>
+                <Btn variant="secondary" onClick={() => setConfirmDelPromo(false)}>Batal</Btn>
+                <Btn variant="danger" onClick={deletePromo}>Ya, hapus</Btn>
+              </> : <>
+                {promo.id && <Btn variant="ghost" icon="trash" className="text-rose-700 hover:bg-rose-50" onClick={() => setConfirmDelPromo(true)}>Hapus</Btn>}
+                <span className="flex-1" />
+                <Btn variant="secondary" onClick={() => setPromo(null)}>Batal</Btn>
+                <Btn onClick={savePromo} disabled={promoInvalid}>Simpan promo</Btn>
+              </>}>
               <div className="space-y-4">
                 <Field label="Nama promo" error={promo.name ? null : promoErrors.name}><input autoFocus value={promo.name} onChange={e => setPromo({ ...promo, name: e.target.value })} className={inputCls} placeholder="cth. Promo Ramadan" /></Field>
                 <div className="grid grid-cols-2 gap-3">
@@ -6667,7 +6895,7 @@
     // =====================================================================
     // EMPLOYEES
     // =====================================================================
-    const WEEKDAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const WEEKDAYS = ['Ahad', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
     function EmployeeManagementModule({ db, setDb, notify, currentUser, checkUsername }) {
       const [editing, setEditing] = useState(null);
@@ -6753,7 +6981,7 @@
                       </td>
                       <td className="px-4 py-3"><Badge tone={ROLE_TONES[u.role] || 'slate'}>{ROLE_LABELS[u.role] || u.role}</Badge></td>
                       <td className="px-4 py-3 text-slate-700">{u.role === 'owner' ? '—' : <>{shiftOf(u, work).name}<p className="text-xs text-slate-500">Libur {WEEKDAYS[u.day_off ?? 0]}</p></>}</td>
-                      <td className="px-4 py-3 text-right text-slate-400">—</td>
+                      <td className={cx('px-4 py-3 text-right tabular', isStaffRole(u.role) ? 'text-slate-800' : 'text-slate-400')}>{isStaffRole(u.role) ? formatIDR(u.base_salary) : '—'}</td>
                       <td className="px-4 py-3"><Badge tone={u.status === 'Nonaktif' ? 'slate' : 'green'}>{u.status || 'Aktif'}</Badge></td>
                       <td className="px-4 py-3 text-right"><Btn variant="ghost" size="sm" icon="edit" onClick={() => open(u)} aria-label={`Edit ${u.name}`}>Edit</Btn></td>
                     </tr>
@@ -6840,7 +7068,8 @@
         { key: 'can_delete_product', label: 'Hapus produk', desc: 'Menghapus produk dari sistem secara permanen.', risky: true },
         { key: 'can_give_discount', label: 'Beri diskon', desc: 'Memberi potongan harga saat checkout.' },
         { key: 'can_void_sale', label: 'Batalkan transaksi', desc: 'Membatalkan nota yang sudah dibayar di Laporan Penjualan.', risky: true },
-        { key: 'can_view_finance', label: 'Lihat laba rugi', desc: 'Melihat laba, HPP, dan biaya operasional.', risky: true }
+        { key: 'can_view_finance', label: 'Lihat laba rugi', desc: 'Melihat laba, HPP, dan biaya operasional.', risky: true },
+        { key: 'can_manage_suppliers', label: 'Supplier / Pemasok', desc: 'Membuat, mengubah, dan menghapus pesanan barang ke supplier.' }
       ];
       return (
         <div className="space-y-5">
@@ -7385,7 +7614,7 @@
       };
       const remove = (it) => setCart(prev => prev.filter(c => c.id !== it.id));
       return (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/60 animate-fade-in" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="fixed inset-0 z-50 !m-0 flex justify-end bg-slate-900/60 animate-fade-in" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
           <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="flex h-full w-full max-w-sm flex-col bg-white shadow-2xl animate-slide-in-right">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h3 id={titleId} className="flex items-center gap-2 text-base font-bold text-slate-900">Keranjang <Badge tone="teal"><span className="tabular">{itemCount}</span> item</Badge></h3>
