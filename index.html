@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <!-- Same colour as the top of the screen, so the phone's status bar blends in. Updated per screen by setThemeColor(). -->
   <meta name="theme-color" content="#f6f8fc">
   <title>KasirBosku — Kasir & Manajemen UMKM</title>
@@ -63,6 +63,9 @@
     /* Expired or disabled license: the whole app turns grey behind the notice */
     html.license-locked #root { filter: grayscale(1); }
     .scrollbar-none { scrollbar-width: none; }
+    /* Refresh button: one turn while the page reloads */
+    @keyframes spinOnce { to { transform: rotate(360deg); } }
+    .animate-spin-once { animation: spinOnce .6s cubic-bezier(.4, 0, .2, 1) infinite; }
 
     @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -385,6 +388,7 @@
       ban: 'M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636',
       calendar: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
       history: 'M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 4v5h5',
+      copy: 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z',
       receipt: 'M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z'
     };
 
@@ -597,7 +601,7 @@
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 animate-fade-in sm:items-center sm:p-4"
           onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
           <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
-            className={cx('flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-2xl outline-none animate-pop-in sm:rounded-2xl', MODAL_SIZES[size], className)}>
+            className={cx('flex max-h-[92vh] max-h-[92dvh] w-full flex-col rounded-t-3xl bg-white shadow-2xl outline-none animate-pop-in sm:rounded-2xl', MODAL_SIZES[size], className)}>
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 no-print">
               <div>
                 <h3 id={titleId} className="text-base font-bold text-slate-900">{title}</h3>
@@ -605,7 +609,7 @@
               </div>
               <IconBtn icon="x" label="Tutup" onClick={onClose} className="-mr-2 -mt-2" />
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+            <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
             {footer && <div className="flex flex-wrap gap-2 border-t border-slate-200 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] no-print">{footer}</div>}
           </div>
         </div>
@@ -640,6 +644,33 @@
     // Brand mark: icon only, no photo
     // The KasirBosku logo mark (from logo-kasirbosku.svg), drawn in the current text colour
     const LOGO_MARK_D = 'M311.992 702.137 L311.992 519.066 C322.846 525.543 341.56 532.758 367.348 528.41 L367.348 702.137 C367.348 725.968 386.668 745.287 410.499 745.287 L613.648 745.287 C637.479 745.287 656.798 725.968 656.798 702.137 L656.798 688.33 C656.798 664.499 637.479 645.18 613.648 645.18 L435.629 645.18 C420.342 645.18 407.95 632.788 407.95 617.501 C407.95 602.215 420.342 589.823 435.629 589.823 L613.648 589.823 C637.479 589.823 656.798 570.504 656.798 546.672 L656.798 532.866 C656.798 531.603 656.745 530.355 656.64 529.125 C671.205 530.901 689.497 529.116 711.231 519.343 C711.841 523.771 712.155 528.286 712.155 532.866 L712.155 546.672 C712.155 574.477 700.636 599.59 682.109 617.501 C700.636 635.413 712.155 660.526 712.155 688.33 L712.155 702.137 C712.155 756.541 668.052 800.644 613.648 800.644 L410.499 800.644 C356.095 800.644 311.992 756.541 311.992 702.137 Z M312.812 228.661 C330.083 220.178 370.815 224.413 391.187 224.413 L568.72 224.413 L678.977 224.413 C692.256 224.413 711.413 222.379 719.623 235.76 C729.906 252.521 735.869 286.479 742.162 306.274 C748.901 327.471 758.736 351.91 762.005 373.739 C764.586 390.973 762.149 412.316 757.063 428.772 C752.59 443.246 745.338 454.423 736.006 464.969 C735.239 465.368 734.446 466.229 733.628 467.597 L733.628 467.597 C730.807 470.647 727.815 473.662 724.667 476.708 C721.532 479.743 717.495 483.052 713.545 485.734 C698.18 496.164 677.814 501.21 660.483 500.226 C633.287 498.681 611.86 490.591 586.603 465.297 C578.667 473.245 570.983 481.366 561.275 487.209 C529.587 506.278 483.878 503.027 454.154 481.989 C447.908 477.568 442.487 470.672 437.12 465.297 C412.199 490.256 394.464 504.13 362.428 503.023 C344.064 502.388 327.325 496.434 312 487.879 C298.974 480.608 288.134 468.408 279.736 456.863 C276.468 452.37 273.647 447.431 271.258 442.182 C260.401 418.325 258.45 388.039 263.876 363.897 C268.686 342.494 277.672 321.744 283.356 300.536 C287.816 283.897 297.981 235.945 312.812 228.661 Z M344.592 275.648 L321.849 348.664 L702.297 348.664 C692.871 324.98 687.434 299.868 679.498 275.648 Z M312.526 400.851 C314.231 408.444 315.739 418.142 320.05 424.847 C340.095 456.03 385.407 455.249 405.109 424.136 C409.233 417.623 410.591 408.187 412.329 400.851 Z M462.009 400.851 C463.714 408.444 465.222 418.142 469.532 424.847 C489.578 456.03 534.89 455.249 554.592 424.136 C558.716 417.623 560.074 408.187 561.812 400.851 Z M611.492 400.851 C613.197 408.444 614.705 418.142 619.015 424.847 C639.061 456.03 684.372 455.249 704.075 424.136 C708.199 417.623 709.557 408.187 711.295 400.851 Z';
+    function RefreshButton() {
+      const [spinning, setSpinning] = useState(false);
+      return (
+        <button type="button" aria-label="Muat ulang halaman" title="Muat ulang halaman" disabled={spinning}
+          onClick={() => { setSpinning(true); setTimeout(() => window.location.reload(), 450); }}
+          className={cx('group hidden h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 sm:inline-flex', focusRing)}>
+          <SvgIcon name="refresh" className={cx('h-5 w-5 transition-transform duration-500 ease-out group-hover:rotate-180 motion-reduce:transition-none', spinning && 'animate-spin-once text-brand-700')} />
+        </button>
+      );
+    }
+
+    // Plan badge beside the KasirBosku name: silver tick monthly, green tick yearly, red TRIAL for the 7-day trial
+    function PlanBadge({ plan }) {
+      if (plan === 'trial') return <span className="inline-flex h-5 items-center rounded-md bg-rose-600 px-1.5 text-[11px] font-bold uppercase leading-none tracking-wide text-white" title="Paket Trial 7 hari">Trial</span>;
+      const tone = plan === 'tahunan' ? '#34d399' : plan === 'bulanan' ? '#cbd5e1' : null;
+      if (!tone) return null;
+      return (
+        <span className="inline-flex flex-shrink-0" title={plan === 'tahunan' ? 'Langganan tahunan' : 'Langganan bulanan'}>
+          <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true">
+            <path fill={tone} d="M12 1.5l2.6 1.9 3.2-.2 1 3.1 2.6 1.9-1 3 1 3.1-2.6 1.9-1 3.1-3.2-.2L12 22.5l-2.6-1.9-3.2.2-1-3.1-2.6-1.9 1-3.1-1-3 2.6-1.9 1-3.1 3.2.2z" />
+            <path fill="none" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M8 12.2l2.6 2.6L16.2 9" />
+          </svg>
+          <span className="sr-only">{plan === 'tahunan' ? 'Terverifikasi, langganan tahunan' : 'Terverifikasi, langganan bulanan'}</span>
+        </span>
+      );
+    }
+
     function BrandMark({ className = 'h-10 w-10', iconClass = 'h-6 w-6', light = false }) {
       return (
         <span className={cx('flex flex-shrink-0 items-center justify-center rounded-xl shadow-sm', light ? 'bg-white text-brand-700' : 'bg-brand-600 text-white', className)} aria-hidden="true">
@@ -853,7 +884,7 @@
             header: 'Selamat datang di Warung Kopi Bosku!', footer: 'Terima kasih telah berbelanja. Simpan struk ini.'
           }
         },
-        permissions: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false },
+        permissions: {},
         users: SEED_USERS,
         products: SEED_PRODUCTS,
         categories: ['Semua', 'Coffee', 'Food', 'Drinks', 'Desserts', 'Sembako'],
@@ -953,6 +984,34 @@
 
     // A cart/sale line for a variant has id "product::variant"; stock and cost belong to the product
     const productIdOf = (it) => it.product_id || String(it.id).split('::')[0];
+    const variantIdOf = (it) => it.variant_id || String(it.id).split('::')[1] || '';
+    // Variants with their own stock count separately, and the product's stock is their sum.
+    // Variants left without a stock number share the product's stock instead.
+    const hasVariantStock = (p) => (p?.variants || []).some(v => v.stock !== '' && v.stock != null);
+    const variantStockSum = (variants) => variants.reduce((a, v) => a + (parseInt(v.stock, 10) || 0), 0);
+    const findVariant = (p, vid) => vid && (p?.variants || []).find(v => v.id === vid);
+    // Stock that limits one cart line: its variant's own stock, or the product's
+    function lineStock(products, lineId) {
+      const p = products.find(x => x.id === productIdOf({ id: lineId }));
+      if (!p) return Infinity;
+      const v = hasVariantStock(p) && findVariant(p, variantIdOf({ id: lineId }));
+      return v ? parseInt(v.stock, 10) || 0 : p.stock;
+    }
+    // Units in the cart that use the same stock as this line
+    function unitsSharingStock(cart, products, lineId) {
+      const pid = productIdOf({ id: lineId });
+      const p = products.find(x => x.id === pid);
+      if (p && hasVariantStock(p) && variantIdOf({ id: lineId })) return cart.filter(c => c.id === lineId).reduce((a, c) => a + c.qty, 0);
+      return cart.filter(c => productIdOf(c) === pid).reduce((a, c) => a + c.qty, 0);
+    }
+    // Adds (or with a negative delta takes) stock for one sold line, keeping the product total equal to its variants
+    function changeLineStock(p, vid, delta) {
+      const v = hasVariantStock(p) && findVariant(p, vid);
+      if (!v) return { ...p, stock: Math.max(0, p.stock + delta) };
+      const variants = p.variants.map(x => x.id === vid ? { ...x, stock: Math.max(0, (parseInt(x.stock, 10) || 0) + delta) } : x);
+      return { ...p, variants, stock: variantStockSum(variants) };
+    }
+    const applySaleLines = (products, items, sign) => products.map(p => items.filter(i => productIdOf(i) === p.id).reduce((acc, i) => changeLineStock(acc, variantIdOf(i), sign * i.qty), p));
 
     // Which kasbon sales are paid off. The customer's open balance covers their newest kasbon first; anything older is paid.
     // Worked out from the balance, so it also holds for kasbon paid before this rule existed and on every device.
@@ -978,7 +1037,8 @@
     function saleCost(sale, products) {
       return sale.items.reduce((a, it) => {
         const p = products.find(x => x.id === productIdOf(it));
-        return a + it.qty * (p ? p.buy_price : it.sell_price * 0.45);
+        const v = findVariant(p, variantIdOf(it));
+        return a + it.qty * (p ? (v && Number(v.buy_price) > 0 ? Number(v.buy_price) : p.buy_price) : it.sell_price * 0.45);
       }, 0);
     }
 
@@ -1005,6 +1065,13 @@
         if (v < price) { price = v; label = p.name; }
       });
       return { price, original: base, discounted: price < base, label, pct: base ? Math.round((1 - price / base) * 100) : 0 };
+    }
+    // On the menu a product with variants shows its cheapest variant
+    function menuPriceInfo(product, promos) {
+      const prices = (product.variants || []).map(v => Number(v.price)).filter(n => n > 0);
+      if (!prices.length) return priceInfo(product, promos);
+      const min = Math.min(...prices);
+      return { price: min, original: min, discounted: false, label: null, pct: 0 };
     }
 
     // ---------- Shifts & attendance ----------
@@ -1127,6 +1194,44 @@
         document.head.appendChild(s);
       });
     }
+    async function copyText(text) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {
+        const t = document.createElement('textarea');
+        t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+        document.body.appendChild(t); t.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch { /* not supported */ }
+        t.remove(); return ok;
+      }
+    }
+
+    // The KasirBosku mark as a PNG for PDF headers: blue mark on a white rounded tile
+    let logoPngCache = null;
+    function logoPng() {
+      if (logoPngCache) return logoPngCache;
+      logoPngCache = new Promise((resolve, reject) => {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="225" fill="#ffffff"/><path fill="#1a4fe6" d="${LOGO_MARK_D}"/></svg>`;
+        const img = new Image();
+        img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 160; c.getContext('2d').drawImage(img, 0, 0, 160, 160); resolve(c.toDataURL('image/png')); };
+        img.onerror = reject;
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      }).catch(e => { logoPngCache = null; throw e; });
+      return logoPngCache;
+    }
+    const PDF_BLUE = [20, 64, 200];
+    // Blue band shared by every PDF: title and subtitle on the left, the KasirBosku logo on the right
+    async function pdfHeader(doc, title, subtitle) {
+      doc.setFillColor(...PDF_BLUE); doc.rect(0, 0, 595, 70, 'F');
+      doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+      doc.text(title, 40, 34);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+      doc.text(subtitle, 40, 54);
+      try { doc.addImage(await logoPng(), 'PNG', 519, 17, 36, 36); } catch { /* header still works without the image */ }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      doc.text(APP_NAME, 511, 39, { align: 'right' });
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(30);
+    }
+    const pdfMoney = (v) => formatIDR(v).replace(/\u00a0/g, ' ');
+
     async function ensureJsPdf() {
       if (!window.jspdf) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
       if (!window.jspdf.jsPDF.API.autoTable) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js');
@@ -1203,7 +1308,21 @@
     const NEWEST_FIRST = new Set(['sales', 'offlineQueue', 'stockHistory', 'products', 'purchases', 'leaves', 'rewards', 'expenses', 'debt_payments', 'investor_payouts', 'staff_notifications']);
     // Numbers several devices change at once; the device sends its starting value and the server adds up the differences
     const COUNTER_FIELDS = { products: ['stock'], customers: ['debt', 'total_spent', 'visits'] };
-    const DEFAULT_PERMISSIONS = { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false };
+    // Each staff role has its own switches; the Bos changes them in Hak Akses
+    const PERMISSION_ROLES = ['kasir', 'supervisor', 'kepala_toko'];
+    const DEFAULT_PERMISSIONS = {
+      kasir: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false },
+      supervisor: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: true, can_view_finance: false },
+      kepala_toko: { can_add_product: true, can_edit_product: true, can_delete_product: true, can_give_discount: true, can_void_sale: true, can_view_finance: true }
+    };
+    // Older stores kept one set of switches for every employee; each role starts from that set
+    function normalizePermissions(val = {}) {
+      const legacy = Object.keys(val).some(k => k.startsWith('can_'));
+      return Object.fromEntries(PERMISSION_ROLES.map(r => {
+        const base = legacy ? { ...DEFAULT_PERMISSIONS.kasir, ...Object.fromEntries(Object.entries(val).filter(([k]) => k.startsWith('can_'))) } : DEFAULT_PERMISSIONS[r];
+        return [r, { ...base, ...(val[r] || {}) }];
+      }));
+    }
 
     const cloudKey = (tenantId, name) => `kasirbosku_${name}@${tenantId}`;
     const recKey = (coll, id) => `${coll}\u0001${id}`;
@@ -1338,7 +1457,7 @@
         store_devices: [],
         receipt: {
           logo: '', show_logo: true, show_address: true, show_phone: true, show_cashier: true, show_customer: true,
-          show_discount: true, show_tax: true, show_brand: true, paper: '58',
+          show_discount: true, show_tax: true, show_brand: true, show_queue: false, paper: '58',
           header: name ? `Selamat datang di ${name}!` : '', footer: 'Terima kasih telah berbelanja. Simpan struk ini.'
         }
       };
@@ -1356,7 +1475,7 @@
     // Server copy -> what the app keeps locally (defaults filled in the same way on every device)
     function normalizeDoc(id, val) {
       if (id === 'business') return mergeBusiness(defaultBusiness(val?.name || ''), val);
-      if (id === 'permissions') return { ...DEFAULT_PERMISSIONS, ...val };
+      if (id === 'permissions') return normalizePermissions(val);
       return val;
     }
     function loadCloudDb(tenantId) {
@@ -2131,11 +2250,24 @@
       }, []);
       const logout = () => { if (cloud) appendLog(session.tenant.id, { id: currentUser.id, name: currentUser.name, role: currentUser.role }, [{ kind: 'akun', action: 'Keluar dari aplikasi', detail: '' }]); onLogout(); };
 
-      const hasPermission = (k) => isOwner || (isInvestor ? k === 'can_view_finance' : !!db.permissions[k]);
+      const hasPermission = (k) => isOwner || (isInvestor ? k === 'can_view_finance' : !!(db.permissions[currentUser.role] || db.permissions.kasir || {})[k]);
       const canAccess = (item) => isInvestor ? INVESTOR_TABS.has(item.id) : (!item.ownerOnly || isOwner) && (!item.perm || hasPermission(item.perm));
       const homeTab = isInvestor ? 'dashboard' : 'pos';
       const activeItem = NAV_ITEMS.find(i => i.id === activeTab) || NAV_ITEMS[1];
       useEffect(() => { if (!canAccess(activeItem)) setActiveTab(homeTab); }, [currentUserId, db.permissions, currentUser.role]);
+      // The app scrolls inside its panels, never the page. On Android (full screen) the keyboard can push the
+      // whole page up and leave the header half hidden after it closes; this moves it back.
+      useEffect(() => {
+        let t;
+        const reset = () => { clearTimeout(t); t = setTimeout(() => {
+          const a = document.activeElement;
+          if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+          if (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop) { window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }
+        }, 150); };
+        window.addEventListener('focusout', reset);
+        window.visualViewport?.addEventListener('resize', reset);
+        return () => { clearTimeout(t); window.removeEventListener('focusout', reset); window.visualViewport?.removeEventListener('resize', reset); };
+      }, []);
       // The menu closes at once; the new page renders as a low-priority update so a slow tablet never stalls the tap
       const go = (id) => { const item = NAV_ITEMS.find(i => i.id === id); if (item && !canAccess(item)) return; setSidebarOpen(false); React.startTransition(() => setActiveTab(id)); };
 
@@ -2395,7 +2527,7 @@
               <div className="flex min-w-0 items-center gap-3">
                 <BrandMark light />
                 <div className="min-w-0">
-                  <p className="truncate text-base font-extrabold tracking-tight">Kasir<span className="text-sun-300">Bosku</span></p>
+                  <p className="flex min-w-0 items-center gap-1.5 text-base font-extrabold tracking-tight"><span className="truncate">Kasir<span className="text-sun-300">Bosku</span></span>{cloud && <PlanBadge plan={license.plan} />}</p>
                   <p className="truncate text-xs text-brand-100">{db.business.name}</p>
                 </div>
               </div>
@@ -2426,11 +2558,11 @@
             </nav>
 
             <div className="space-y-2 border-t border-white/10 p-3">
-              <button type="button" onClick={() => setShowCSModal(true)}
+              {!isInvestor && <button type="button" onClick={() => setShowCSModal(true)}
                 className="flex w-full min-h-[44px] items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
                 <SvgIcon name="help" className="h-5 w-5 text-sun-300" />
                 <span className="font-medium">Bantuan & Panduan</span>
-              </button>
+              </button>}
               <p className="px-3 text-[11px] text-brand-200">crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className="font-semibold text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">menjadibos.com</a></p>
               {cloud ? (
                 <div className="flex items-center gap-2.5 rounded-xl bg-white/10 py-1.5 pl-2 pr-1 ring-1 ring-white/15">
@@ -2513,9 +2645,9 @@
                   </Btn>
                 )}
 
-                <IconBtn icon="refresh" label="Muat ulang halaman" onClick={() => window.location.reload()} className="hidden sm:inline-flex" />
+                <RefreshButton />
 
-                <div className="relative" ref={notifRef}>
+                {!isInvestor && <div className="relative" ref={notifRef}>
                   <button type="button" aria-label={`Notifikasi, ${notifications.length} item${hasUnread ? ', ada yang baru' : ''}`} aria-expanded={showNotifMenu}
                     onClick={() => { setShowNotifMenu(v => !v); setSeenSignature(notifSignature); }}
                     className={cx('relative inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900', focusRing)}>
@@ -2546,7 +2678,7 @@
                       )}
                     </div>
                   )}
-                </div>
+                </div>}
 
                 <button type="button" aria-label={`Keranjang, ${totalCartCount} item`} onClick={() => setShowCartDrawer(true)}
                   className={cx('relative hidden h-11 w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900', !isInvestor && 'sm:inline-flex', focusRing)}>
@@ -2720,6 +2852,11 @@
             <div className="flex justify-between"><span>Kembali</span><span>{formatIDR(sale.cash_paid - sale.total)}</span></div>
           </>}
           <p className="mt-1">Bayar: <span className={sale.kasbon_status === 'paid' ? 'font-bold' : undefined}>{paymentLabel(sale)}</span></p>
+          {r.show_queue && sale.queue_no && <>
+            <div className="my-2 border-t border-dashed border-slate-300" />
+            <p className="text-center">No. Antrian</p>
+            <p className="text-center text-2xl font-bold leading-tight">{sale.queue_no}</p>
+          </>}
           {r.footer && <p className="mt-2 text-center">{r.footer}</p>}
           {r.show_brand && <p className="mt-2 text-center text-[10px] text-slate-500">Dibuat dengan {APP_NAME}</p>}
         </div>
@@ -2784,6 +2921,7 @@
       row('TOTAL', money(sale.total), { bold: true });
       if (sale.cash_paid != null) { row('Tunai', money(sale.cash_paid)); row('Kembali', money(sale.cash_paid - sale.total)); }
       add(`Bayar: ${paymentLabel(sale)}`);
+      if (r.show_queue && sale.queue_no) { rule(); center('No. Antrian'); center(String(sale.queue_no), { bold: true, big: true }); }
       if (r.footer) { add(''); center(r.footer); }
       if (r.show_brand) { add(''); center(`Dibuat dengan ${APP_NAME}`); }
       return L;
@@ -3603,7 +3741,7 @@
       const selectedCustomer = db.customers.find(c => c.id === selectedCustomerId) || db.customers[0];
       const isWalkIn = !selectedCustomer || selectedCustomer.id === 'cust-1';
 
-      const stockOf = (id) => db.products.find(p => p.id === productIdOf({ id }))?.stock ?? 0;
+      const stockOf = (id) => lineStock(db.products, id);
       // Units of one product in the cart, over all its variants
       const qtyInCart = (pid) => cart.filter(c => productIdOf(c) === pid).reduce((a, c) => a + c.qty, 0);
       const [variantPick, setVariantPick] = useState(null);
@@ -3620,13 +3758,16 @@
 
       const addToCart = (product, variant) => {
         if (product.variants?.length && !variant) { setVariantPick(product); return; }
-        if (qtyInCart(product.id) >= product.stock) {
-          notify(product.stock <= 0 ? `Stok ${product.name} habis.` : `Stok ${product.name} hanya ${product.stock}.`, 'warn');
+        const lineId = variant ? `${product.id}::${variant.id}` : product.id;
+        const avail = stockOf(lineId);
+        if (unitsSharingStock(cart, db.products, lineId) >= avail) {
+          const label = variant ? `${product.name} · ${variant.name}` : product.name;
+          notify(avail <= 0 ? `Stok ${label} habis.` : `Stok ${label} hanya ${avail}.`, 'warn');
           return;
         }
         const info = priceInfo(product, promos);
         const line = variant
-          ? { id: `${product.id}::${variant.id}`, product_id: product.id, variant_id: variant.id, name: `${product.name} · ${variant.name}`, qty: 1, sell_price: Number(variant.price) || info.price, original_price: Number(variant.price) || info.original }
+          ? { id: lineId, product_id: product.id, variant_id: variant.id, name: `${product.name} · ${variant.name}`, qty: 1, sell_price: Number(variant.price) || info.price, original_price: Number(variant.price) || info.original }
           : { id: product.id, name: product.name, qty: 1, sell_price: info.price, original_price: info.original };
         setCart(prev => prev.some(c => c.id === line.id)
           ? prev.map(c => c.id === line.id ? { ...c, qty: c.qty + 1 } : c)
@@ -3636,7 +3777,7 @@
       const removeOneOf = (pid) => { const line = [...cart].reverse().find(c => productIdOf(c) === pid); if (line) updateQty(line.id, -1); };
 
       const updateQty = (id, delta) => {
-        if (delta > 0 && qtyInCart(productIdOf({ id })) >= stockOf(id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
+        if (delta > 0 && unitsSharingStock(cart, db.products, id) >= stockOf(id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
         setCart(prev => prev.map(c => c.id === id ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
       };
 
@@ -3674,10 +3815,7 @@
 
       const commitSale = (sale, { asDebt } = {}) => {
         setDb(prev => {
-          const products = prev.products.map(p => {
-            const qty = cart.filter(c => productIdOf(c) === p.id).reduce((a, c) => a + c.qty, 0);
-            return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
-          });
+          const products = applySaleLines(prev.products, cart, -1);
           const customers = prev.customers.map(c => {
             if (c.id !== selectedCustomerId || c.id === 'cust-1') return c;
             return asDebt ? { ...c, debt: (c.debt || 0) + sale.total, visits: c.visits + 1 } : { ...c, total_spent: c.total_spent + sale.total, visits: c.visits + 1 };
@@ -3702,6 +3840,8 @@
         cashier: currentUser.name, cashier_id: currentUser.id,
         session_id: openSession?.id || null,
         sync_status: isOfflineMode ? 'pending_sync' : 'synced',
+        // Queue number restarts every day
+        queue_no: allSalesOf(db).filter(s => saleDay(s) === dateKey()).reduce((m, s) => Math.max(m, s.queue_no || 0), 0) + 1,
         items: cart.map(({ id, name, qty, sell_price, original_price }) => ({ id, name, qty, sell_price, original_price })),
         ...overrides
       });
@@ -3740,7 +3880,7 @@
         const inCart = qtyInCart(prod.id);
         const out = prod.stock <= 0;
         const low = !out && prod.stock <= prod.min_stock;
-        const info = priceInfo(prod, promos);
+        const info = menuPriceInfo(prod, promos);
         const controls = <MenuControls name={prod.name} inCart={inCart} disabled={out || inCart >= prod.stock} onAdd={() => addToCart(prod)} onRemove={() => removeOneOf(prod.id)} />;
         const isBest = bestSellers.has(prod.id);
         const addLabel = `Tambah ${prod.name}${isBest ? ' (terlaris)' : ''}, ${formatIDR(info.price)}${info.discounted ? `, diskon ${info.pct}%` : ''}, stok ${prod.stock}`;
@@ -3937,7 +4077,7 @@
                               <IconBtn icon="trash" label={`Hapus ${item.name}`} iconClass="w-4 h-4" onClick={() => updateQty(item.id, -item.qty)} className="-mr-1 -mt-1 h-9 w-9 text-slate-400 hover:bg-rose-50 hover:text-rose-600" />
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-2">
-                              <QtyStepper qty={item.qty} name={item.name} onDec={() => updateQty(item.id, -1)} onInc={() => updateQty(item.id, 1)} incDisabled={qtyInCart(productIdOf(item)) >= stockOf(item.id)} />
+                              <QtyStepper qty={item.qty} name={item.name} onDec={() => updateQty(item.id, -1)} onInc={() => updateQty(item.id, 1)} incDisabled={unitsSharingStock(cart, db.products, item.id) >= stockOf(item.id)} />
                               <span className="text-sm font-bold text-slate-900 tabular">{formatIDR(item.sell_price * item.qty)}</span>
                             </div>
                           </div>
@@ -4037,15 +4177,22 @@
           {variantPick && (
             <Modal title={`Pilih varian ${variantPick.name}`} desc={`Stok ${variantPick.stock} ${variantPick.unit}`} size="sm" onClose={() => setVariantPick(null)}>
               <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {variantPick.variants.map(v => (
-                  <li key={v.id}>
-                    <button type="button" onClick={() => { addToCart(variantPick, v); setVariantPick(null); }}
-                      className={cx('flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 text-left transition-colors hover:border-brand-600 hover:bg-brand-50', focusRing)}>
-                      <span className="text-sm font-semibold text-slate-900">{v.name}</span>
-                      <span className="text-sm font-semibold text-brand-800 tabular">{formatIDR(Number(v.price) || priceInfo(variantPick, promos).price)}</span>
-                    </button>
-                  </li>
-                ))}
+                {variantPick.variants.map(v => {
+                  const own = hasVariantStock(variantPick);
+                  const left = own ? (parseInt(v.stock, 10) || 0) - unitsSharingStock(cart, db.products, `${variantPick.id}::${v.id}`) : null;
+                  return (
+                    <li key={v.id}>
+                      <button type="button" disabled={own && left <= 0} onClick={() => { addToCart(variantPick, v); setVariantPick(null); }}
+                        className={cx('flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 text-left transition-colors hover:border-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50', focusRing)}>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-slate-900">{v.name}</span>
+                          {own && <span className={cx('block text-xs', left <= 0 ? 'font-semibold text-rose-600' : 'text-slate-500')}>{left <= 0 ? 'Stok habis' : `Stok ${left}`}</span>}
+                        </span>
+                        <span className="text-sm font-semibold text-brand-800 tabular">{formatIDR(Number(v.price) || priceInfo(variantPick, promos).price)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </Modal>
           )}
@@ -4241,6 +4388,14 @@
       const [voidReason, setVoidReason] = useState('');
       const [productSort, setProductSort] = useState({ key: 'qty', dir: 'desc' });
       const [txSort, setTxSort] = useState({ key: 'date', dir: 'desc' });
+      const [expForm, setExpForm] = useState(null);
+      const canRecordExpense = currentUser.role !== 'investor';
+      const saveExpense = () => {
+        if (!expForm.amount) return;
+        addExpense(setDb, expForm, currentUser);
+        notify(`Pengeluaran ${formatIDR(expForm.amount)} dicatat. Bos bisa melihatnya di Laba Rugi.`);
+        setExpForm(null);
+      };
 
       const [from, to] = rangeBounds(range, customFrom, customTo);
       const singleDay = from === to;
@@ -4324,7 +4479,7 @@
             ...prev,
             sales: mark(prev.sales),
             offlineQueue: mark(prev.offlineQueue),
-            products: prev.products.map(p => { const qty = sale.items.filter(i => productIdOf(i) === p.id).reduce((a, i) => a + i.qty, 0); return qty ? { ...p, stock: p.stock + qty } : p; }),
+            products: applySaleLines(prev.products, sale.items, 1),
             customers: sale.payment_method === 'bayar_nanti' ? prev.customers.map(c => (c.id === sale.customer_id || c.name === sale.customer_name) ? { ...c, debt: Math.max(0, c.debt - sale.total) } : c) : prev.customers,
             stockHistory: [...sale.items.map(it => ({ id: generateId('SH'), date: stamp, sku: prev.products.find(p => p.id === productIdOf(it))?.sku || '-', name: it.name, qtyChange: `+${it.qty}`, type: `Pembatalan ${sale.receipt_no}`, user: currentUser.name })), ...prev.stockHistory]
           };
@@ -4361,7 +4516,11 @@
       return (
         <div className="space-y-5">
           <PageHeader title="Laporan Penjualan" desc="Semua transaksi toko. Pilih kasir untuk melihat penjualan satu orang."
-            actions={<Btn variant="secondary" icon="download" onClick={exportReport} disabled={!scoped.length}>Export Excel (CSV)</Btn>} />
+            actions={<>
+              {canRecordExpense && <Btn variant="secondary" icon="plus" onClick={() => setExpForm(newExpense())}>Catat pengeluaran</Btn>}
+              <Btn variant="secondary" icon="download" onClick={exportReport} disabled={!scoped.length}>Export Excel (CSV)</Btn>
+            </>} />
+          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} />}
 
           {pendingRequests.length > 0 && (
             <Card className="border-amber-300 bg-amber-50/40 p-4">
@@ -4479,7 +4638,7 @@
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedProducts.slice(0, 50).map(p => {
-                    const prod = db.products.find(x => x.id === p.id) || { name: p.name };
+                    const prod = db.products.find(x => x.id === productIdOf(p)) || { name: p.name };
                     const share = Math.round(p.omzet / productTotal * 100);
                     return (
                       <tr key={p.id} className="hover:bg-slate-50">
@@ -4666,7 +4825,21 @@
         setNewCat(null);
       };
       const setVariant = (i, k, v) => setForm(f => ({ ...f, variants: f.variants.map((x, j) => j === i ? { ...x, [k]: v } : x) }));
-      const open = (p) => { setNewCat(null); setEditing(p); setForm(p === 'new' ? { ...EMPTY_PRODUCT, category: db.categories.find(c => c !== 'Semua') || 'Lainnya' } : { ...EMPTY_PRODUCT, ...p }); setConfirmDelete(false); setSubmitted(false); };
+      const variantStock = hasVariantStock(form);
+      const shownStock = variantStock ? variantStockSum(form.variants) : form.stock;
+      // A new variant row scrolls into view with its name field ready to type
+      const variantListRef = useRef(null);
+      const variantCount = useRef(0);
+      useEffect(() => {
+        const n = (form.variants || []).length;
+        if (editing && n > variantCount.current && variantListRef.current) {
+          const row = variantListRef.current.lastElementChild;
+          if (row) { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); const input = row.querySelector('input'); input && input.focus({ preventScroll: true }); }
+        }
+        variantCount.current = n;
+      }, [form.variants, editing]);
+      const addVariant = () => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: '', name: '', price: f.sell_price, buy_price: '', stock: '' }] }));
+      const open = (p) => { variantCount.current = p === 'new' ? 0 : (p.variants || []).length; setNewCat(null); setEditing(p); setForm(p === 'new' ? { ...EMPTY_PRODUCT, category: db.categories.find(c => c !== 'Semua') || 'Lainnya' } : { ...EMPTY_PRODUCT, ...p }); setConfirmDelete(false); setSubmitted(false); };
       const close = () => setEditing(null);
 
       // Both filter counts follow the search, so "Semua (5)" means 5 products match what was typed
@@ -4682,10 +4855,15 @@
         const clean = {
           name: form.name.trim(), category: form.category,
           buy_price: Number(form.buy_price) || 0, sell_price: Number(form.sell_price) || 0, promo_price: promoPrice,
-          stock: parseInt(form.stock, 10) || 0, min_stock: parseInt(form.min_stock, 10) || 0,
+          min_stock: parseInt(form.min_stock, 10) || 0,
           unit: form.unit || 'Pcs', img: form.img || '',
-          variants: (form.variants || []).filter(v => v.name.trim()).map(v => ({ id: v.id || generateId('VAR'), name: v.name.trim(), price: Number(v.price) || 0 }))
+          variants: (form.variants || []).filter(v => v.name.trim()).map(v => ({
+            id: v.id || generateId('VAR'), name: v.name.trim(), price: Number(v.price) || 0,
+            buy_price: Number(v.buy_price) > 0 ? Number(v.buy_price) : '',
+            stock: v.stock === '' || v.stock == null ? '' : Math.max(0, parseInt(v.stock, 10) || 0)
+          }))
         };
+        clean.stock = hasVariantStock(clean) ? variantStockSum(clean.variants) : parseInt(form.stock, 10) || 0;
         if (editing === 'new') {
           const added = { id: 'p-' + Date.now(), sku: skuTrim || autoSku(), ...clean };
           setDb(prev => ({ ...prev, products: [added, ...prev.products], stockHistory: [{ id: generateId('SH'), date: nowStamp(), sku: added.sku, name: added.name, qtyChange: `+${added.stock}`, type: 'Stok awal produk baru', user: currentUser.name }, ...prev.stockHistory] }));
@@ -4712,10 +4890,11 @@
       const saveRestock = () => {
         if (!restock.qty) return;
         const p = restock.product;
+        const v = hasVariantStock(p) && findVariant(p, restock.variant_id || p.variants[0].id);
         setDb(prev => ({
           ...prev,
-          products: prev.products.map(x => x.id === p.id ? { ...x, stock: x.stock + restock.qty } : x),
-          stockHistory: [{ id: generateId('SH'), date: nowStamp(), sku: p.sku, name: p.name, qtyChange: `+${restock.qty}`, type: restock.note || 'Restock', user: currentUser.name }, ...prev.stockHistory]
+          products: prev.products.map(x => x.id === p.id ? changeLineStock(x, v ? v.id : '', restock.qty) : x),
+          stockHistory: [{ id: generateId('SH'), date: nowStamp(), sku: p.sku, name: v ? `${p.name} · ${v.name}` : p.name, qtyChange: `+${restock.qty}`, type: restock.note || 'Restock', user: currentUser.name }, ...prev.stockHistory]
         }));
         notify(`Stok ${p.name} bertambah ${restock.qty}.`);
         setRestock(null);
@@ -4842,24 +5021,26 @@
                   </div>
                   {promoError ? <span className="mt-1 block text-xs font-medium text-rose-600" role="alert">{promoError}</span> : <span className="mt-1 block text-xs text-slate-500">{promoHint}</span>}
                 </div>
-                <Field label="Jumlah stok" className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.stock} onChange={set('stock')} className={cx(inputCls, 'tabular')} /></Field>
+                <Field label="Jumlah stok" hint={variantStock ? 'Otomatis dari stok varian.' : null} className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={shownStock} onChange={set('stock')} disabled={variantStock} className={cx(inputCls, 'tabular disabled:bg-slate-100 disabled:text-slate-600')} /></Field>
                 <Field label="Stok minimum" hint="Peringatan di bawah angka ini." className="sm:col-span-2"><input type="number" min="0" inputMode="numeric" value={form.min_stock} onChange={set('min_stock')} className={cx(inputCls, 'tabular')} /></Field>
                 <Field label="Satuan" className="sm:col-span-2"><input value={form.unit} onChange={set('unit')} className={inputCls} placeholder="Pcs / Cup / Kg" /></Field>
                 <div className="sm:col-span-6">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <span className="text-sm font-medium text-slate-700">Varian</span>
-                      <span className="block text-xs text-slate-500">Contoh: ukuran Kecil/Besar atau rasa. Stok dipakai bersama.</span>
+                      <span className="block text-xs text-slate-500">Contoh: ukuran Kecil/Besar atau rasa. Isi stok varian agar dihitung terpisah; kosongkan untuk memakai stok produk.</span>
                     </div>
-                    <Btn variant="secondary" size="sm" icon="plus" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: '', name: '', price: f.sell_price }] }))}>Tambah varian</Btn>
+                    <Btn variant="secondary" size="sm" icon="plus" onClick={addVariant}>Tambah varian</Btn>
                   </div>
                   {(form.variants || []).length > 0 && (
-                    <ul className="mt-3 space-y-2">
+                    <ul ref={variantListRef} className="mt-3 space-y-2">
                       {form.variants.map((v, i) => (
-                        <li key={v.id || i} className="flex items-center gap-2">
-                          <input aria-label={`Nama varian ${i + 1}`} value={v.name} maxLength={30} onChange={e => setVariant(i, 'name', e.target.value)} placeholder="cth. Besar" className={cx(inputCls, 'min-w-0 flex-1')} />
-                          <div className="w-36 flex-shrink-0 sm:w-44"><MoneyInput aria-label={`Harga varian ${i + 1}`} value={v.price} onChange={(val) => setVariant(i, 'price', val && val.target ? val.target.value : val)} /></div>
-                          <IconBtn icon="trash" label={`Hapus varian ${v.name || i + 1}`} iconClass="h-4 w-4" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== i) }))} className="text-slate-500 hover:bg-rose-50 hover:text-rose-600" />
+                        <li key={v.id || i} className="grid grid-cols-2 items-end gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(0,1fr)_8.5rem_8.5rem_5.5rem_auto]">
+                          <Field label="Nama varian" className="col-span-2 sm:col-span-1"><input value={v.name} maxLength={30} onChange={e => setVariant(i, 'name', e.target.value)} placeholder="cth. Besar" className={inputCls} /></Field>
+                          <Field label="Harga jual"><MoneyInput value={v.price} onChange={(val) => setVariant(i, 'price', val)} /></Field>
+                          <Field label="HPP"><MoneyInput value={v.buy_price} onChange={(val) => setVariant(i, 'buy_price', val)} placeholder={formatNumberWithDots(form.buy_price || 0)} /></Field>
+                          <Field label="Stok"><input type="number" min="0" inputMode="numeric" value={v.stock ?? ''} onChange={e => setVariant(i, 'stock', e.target.value)} placeholder="—" className={cx(inputCls, 'tabular')} /></Field>
+                          <IconBtn icon="trash" label={`Hapus varian ${v.name || i + 1}`} iconClass="h-4 w-4" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== i) }))} className="justify-self-end text-slate-500 hover:bg-rose-50 hover:text-rose-600" />
                         </li>
                       ))}
                     </ul>
@@ -4876,6 +5057,9 @@
                 <Field label="Jumlah masuk" hint={restock.qty ? `Stok baru: ${restock.product.stock + restock.qty} ${restock.product.unit}` : 'Untuk barang dari supplier, sebaiknya catat lewat Pembelian & PO.'}>
                   <input autoFocus type="number" min="1" inputMode="numeric" value={restock.qty || ''} onChange={e => setRestock({ ...restock, qty: Math.max(0, parseInt(e.target.value, 10) || 0) })} className={cx(inputCls, 'tabular')} />
                 </Field>
+                {hasVariantStock(restock.product) && (
+                  <Field label="Varian"><select value={restock.variant_id || restock.product.variants[0].id} onChange={e => setRestock({ ...restock, variant_id: e.target.value })} className={inputCls}>{restock.product.variants.map(v => <option key={v.id} value={v.id}>{v.name} · stok {parseInt(v.stock, 10) || 0}</option>)}</select></Field>
+                )}
                 <Field label="Keterangan"><input value={restock.note} onChange={e => setRestock({ ...restock, note: e.target.value })} className={inputCls} /></Field>
               </div>
             </Modal>
@@ -5836,7 +6020,26 @@
     // =====================================================================
     const EXPENSE_CATEGORIES = ['Bahan Baku', 'Gaji & Bonus', 'Listrik & Air', 'Sewa & Kebersihan', 'Transportasi', 'Perawatan', 'Lainnya'];
 
-    function FinanceModule({ db, setDb, notify }) {
+    function ExpenseModal({ form, setForm, onSave, onClose }) {
+      return (
+        <Modal title="Catat pengeluaran" onClose={onClose}
+          footer={<><span className="flex-1" /><Btn variant="secondary" onClick={onClose}>Batal</Btn><Btn onClick={onSave} disabled={!form.amount}>Simpan</Btn></>}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Tanggal"><input type="date" value={form.date} max={dateKey()} onChange={e => setForm({ ...form, date: e.target.value })} className={inputCls} /></Field>
+              <Field label="Kategori"><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={inputCls}>{EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></Field>
+            </div>
+            <Field label="Nominal"><MoneyInput autoFocus value={form.amount} onChange={v => setForm({ ...form, amount: v })} /></Field>
+            <Field label="Catatan"><input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} className={inputCls} placeholder="cth. beli gula 5 kg" /></Field>
+          </div>
+        </Modal>
+      );
+    }
+    const newExpense = () => ({ date: dateKey(), category: 'Bahan Baku', amount: 0, note: '' });
+    // Every expense keeps who wrote it down
+    const addExpense = (setDb, form, user) => setDb(prev => ({ ...prev, expenses: [{ id: generateId('EXP'), ...form, by: user.name, by_id: user.id }, ...prev.expenses] }));
+
+    function FinanceModule({ db, setDb, notify, currentUser }) {
       const [month, setMonth] = useState(dateKey().slice(0, 7));
       const [expForm, setExpForm] = useState(null);
       const [pdfBusy, setPdfBusy] = useState(false);
@@ -5862,14 +6065,9 @@
         try {
           const JsPDF = await ensureJsPdf();
           const doc = new JsPDF({ unit: 'pt', format: 'a4' });
-          const teal = [20, 64, 200];
-          const rp = (v) => formatIDR(v).replace(/ /g, ' ');
-          doc.setFillColor(...teal); doc.rect(0, 0, 595, 70, 'F');
-          doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
-          doc.text('Laporan Laba Rugi', 40, 34);
-          doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
-          doc.text(`${db.business.name} · ${monthLabel(month)}`, 40, 54);
-          doc.setTextColor(30);
+          const teal = PDF_BLUE;
+          const rp = pdfMoney;
+          await pdfHeader(doc, 'Laporan Laba Rugi', `${db.business.name} · ${monthLabel(month)}`);
           doc.autoTable({
             startY: 95, theme: 'plain', margin: { left: 40, right: 40 },
             head: [['Ringkasan Laba Rugi', 'Nominal']], headStyles: { fillColor: teal, textColor: 255, fontStyle: 'bold' },
@@ -5908,7 +6106,7 @@
 
       const saveExpense = () => {
         if (!expForm.amount) return;
-        setDb(prev => ({ ...prev, expenses: [{ id: generateId('EXP'), ...expForm }, ...prev.expenses] }));
+        addExpense(setDb, expForm, currentUser);
         notify(`Pengeluaran ${formatIDR(expForm.amount)} dicatat.`);
         setExpForm(null);
       };
@@ -5924,7 +6122,7 @@
         <div className="space-y-5">
           <PageHeader title="Laporan Laba Rugi" desc="Penjualan, HPP, dan biaya operasional per bulan."
             actions={<>
-              <Btn variant="secondary" icon="plus" onClick={() => setExpForm({ date: dateKey(), category: 'Bahan Baku', amount: 0, note: '' })}>Catat pengeluaran</Btn>
+              {currentUser.role !== 'investor' && <Btn variant="secondary" icon="plus" onClick={() => setExpForm(newExpense())}>Catat pengeluaran</Btn>}
               <Btn variant="secondary" icon="download" onClick={exportCsv}>Excel (CSV)</Btn>
               <Btn variant="dark" icon="download" onClick={downloadPdf} disabled={pdfBusy}>{pdfBusy ? 'Membuat PDF…' : 'Unduh PDF'}</Btn>
             </>} />
@@ -5952,7 +6150,7 @@
                 <ul className="mt-3 divide-y divide-slate-100">
                   {expenses.map(e => (
                     <li key={e.id} className="flex items-center justify-between gap-3 py-3 text-sm">
-                      <div className="min-w-0"><p className="font-semibold text-slate-900">{e.category}</p><p className="truncate text-slate-500">{fmtDateShort(e.date)}{e.note ? ` · ${e.note}` : ''}</p></div>
+                      <div className="min-w-0"><p className="font-semibold text-slate-900">{e.category}</p><p className="truncate text-slate-500">{fmtDateShort(e.date)}{e.note ? ` · ${e.note}` : ''}{e.by ? ` · ${e.by}` : ''}</p></div>
                       <span className="font-semibold text-rose-600 tabular">{formatIDR(e.amount)}</span>
                     </li>
                   ))}
@@ -5961,19 +6159,7 @@
             </Card>
           </div>
 
-          {expForm && (
-            <Modal title="Catat pengeluaran" onClose={() => setExpForm(null)}
-              footer={<><span className="flex-1" /><Btn variant="secondary" onClick={() => setExpForm(null)}>Batal</Btn><Btn onClick={saveExpense} disabled={!expForm.amount}>Simpan</Btn></>}>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Tanggal"><input type="date" value={expForm.date} max={dateKey()} onChange={e => setExpForm({ ...expForm, date: e.target.value })} className={inputCls} /></Field>
-                  <Field label="Kategori"><select value={expForm.category} onChange={e => setExpForm({ ...expForm, category: e.target.value })} className={inputCls}>{EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></Field>
-                </div>
-                <Field label="Nominal"><MoneyInput autoFocus value={expForm.amount} onChange={v => setExpForm({ ...expForm, amount: v })} /></Field>
-                <Field label="Catatan"><input value={expForm.note} onChange={e => setExpForm({ ...expForm, note: e.target.value })} className={inputCls} placeholder="cth. beli gula 5 kg" /></Field>
-              </div>
-            </Modal>
-          )}
+          {expForm && <ExpenseModal form={expForm} setForm={setExpForm} onSave={saveExpense} onClose={() => setExpForm(null)} />}
         </div>
       );
     }
@@ -6002,7 +6188,9 @@
     function DebtsModule({ db, setDb, notify, currentUser }) {
       const [paying, setPaying] = useState(null);
       const [amount, setAmount] = useState(0);
+      const [method, setMethod] = useState('cash');
       const [openId, setOpenId] = useState(null);
+      const [pdfFor, setPdfFor] = useState(null);
       const today = dateKey();
 
       const suppliers = db.suppliers.map(s => {
@@ -6022,7 +6210,7 @@
       const confirm = () => {
         if (amountError) return;
         const { kind, entity } = paying;
-        const record = { id: generateId('PAY'), kind, party_id: entity.id, amount, date: new Date().toISOString(), by: currentUser.name };
+        const record = { id: generateId('PAY'), kind, party_id: entity.id, amount, method, date: new Date().toISOString(), by: currentUser.name, remaining: Math.max(0, debt - amount) };
         setDb(prev => {
           if (kind === 'supplier') {
             // Pay the oldest due purchase orders first
@@ -6030,20 +6218,76 @@
             const order = prev.purchases.filter(p => p.supplier_id === entity.id && poOutstanding(p) > 0).sort((a, b) => (a.due_date || '').localeCompare(b.due_date || '')).map(p => p.id);
             const paidMap = {};
             order.forEach(id => { const po = prev.purchases.find(p => p.id === id); const take = Math.min(left, poOutstanding(po)); if (take > 0) { paidMap[id] = take; left -= take; } });
+            record.allocations = Object.entries(paidMap).map(([id, amt]) => { const po = prev.purchases.find(p => p.id === id); return { po_number: po.po_number, due_date: po.due_date || '', total: po.total, amount: amt, left: poOutstanding(po) - amt }; });
             return { ...prev, purchases: prev.purchases.map(p => paidMap[p.id] ? { ...p, paid: (p.paid || 0) + paidMap[p.id] } : p), debt_payments: [record, ...(prev.debt_payments || [])] };
           }
           return { ...prev, customers: prev.customers.map(c => c.id === entity.id ? { ...c, debt: Math.max(0, c.debt - amount) } : c), debt_payments: [record, ...(prev.debt_payments || [])] };
         });
-        notify(kind === 'supplier' ? `Pembayaran ${formatIDR(amount)} ke ${entity.name} tercatat.` : `Pelunasan ${formatIDR(amount)} dari ${entity.name} diterima.`);
+        notify(kind === 'supplier' ? `Pembayaran ${formatIDR(amount)} ke ${entity.name} tercatat. Invoice bisa diunduh di riwayat pembayaran.` : `Pelunasan ${formatIDR(amount)} (${PAYMENT_LABELS[method]}) dari ${entity.name} diterima.`);
+        if (kind === 'supplier') setOpenId(entity.id);
         setPaying(null);
       };
-      const open = (kind, entity) => { setPaying({ kind, entity }); setAmount(entity.debt); };
+      const open = (kind, entity) => { setPaying({ kind, entity }); setAmount(entity.debt); setMethod('cash'); };
 
-      const PaymentHistory = ({ list }) => list.length === 0 ? null : (
+      // Payment slip for a supplier, laid out like the Laba Rugi PDF
+      const downloadInvoice = async (pay, supplier) => {
+        setPdfFor(pay.id);
+        try {
+          const JsPDF = await ensureJsPdf();
+          const doc = new JsPDF({ unit: 'pt', format: 'a4' });
+          const invNo = `INV-${pay.id.replace(/^PAY-?/, '').slice(-8).toUpperCase()}`;
+          await pdfHeader(doc, 'Invoice Pembayaran Hutang', `${db.business.name} · ${fmtDateShort(dateKey(new Date(pay.date)))}`);
+          doc.autoTable({
+            startY: 95, theme: 'plain', margin: { left: 40, right: 40 },
+            head: [['Detail pembayaran', '']], headStyles: { fillColor: PDF_BLUE, textColor: 255, fontStyle: 'bold' },
+            styles: { fontSize: 11, cellPadding: 7 }, columnStyles: { 1: { halign: 'right' } },
+            body: [
+              ['No. invoice', invNo],
+              ['Dibayar kepada', supplier.name],
+              ['Dibayar oleh', `${db.business.name}${db.business.phone ? ` · ${db.business.phone}` : ''}`],
+              ['Tanggal & jam', fmtDateTime(pay.date)],
+              ['Metode pembayaran', PAYMENT_LABELS[pay.method] || 'Tunai'],
+              ['Dicatat oleh', pay.by || '-'],
+              [{ content: 'JUMLAH DIBAYAR', styles: { fontStyle: 'bold', fillColor: [238, 244, 255] } }, { content: pdfMoney(pay.amount), styles: { fontStyle: 'bold', fillColor: [238, 244, 255] } }],
+              ...(pay.remaining != null ? [[{ content: 'Sisa hutang setelah pembayaran ini', styles: { textColor: 110 } }, { content: pdfMoney(pay.remaining), styles: { textColor: 110 } }]] : [])
+            ]
+          });
+          if (pay.allocations?.length) {
+            const y = doc.lastAutoTable.finalY + 34;
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30);
+            doc.text('Rincian PO yang dibayar', 40, y);
+            doc.setFont('helvetica', 'normal');
+            doc.autoTable({
+              startY: y + 12, margin: { left: 40, right: 40 },
+              head: [['No. PO', 'Jatuh tempo', 'Total PO', 'Dibayar', 'Sisa']],
+              foot: [[{ content: 'Total dibayar', colSpan: 3 }, pdfMoney(pay.amount), '']],
+              footStyles: { fillColor: [238, 244, 255], textColor: 30, fontStyle: 'bold', halign: 'right' },
+              body: pay.allocations.map(a => [a.po_number, a.due_date ? fmtDateShort(a.due_date) : '-', pdfMoney(a.total), pdfMoney(a.amount), pdfMoney(a.left)]),
+              headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
+            });
+          }
+          doc.setFontSize(8); doc.setTextColor(140);
+          doc.text(`Dibuat dengan ${APP_NAME} · ${fmtDateTime(new Date().toISOString())}`, 40, 820);
+          doc.save(`Invoice_${supplier.name.replace(/\s+/g, '_')}_${invNo}.pdf`);
+          notify('Invoice PDF diunduh.');
+        } catch {
+          notify('Invoice gagal dibuat. Pastikan ada internet untuk pertama kali, lalu coba lagi.', 'warn');
+        } finally { setPdfFor(null); }
+      };
+
+      const PaymentHistory = ({ list, supplier }) => list.length === 0 ? null : (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Riwayat pembayaran</p>
           <ul className="mt-1 space-y-1 text-sm">
-            {list.map(p => <li key={p.id} className="flex justify-between gap-2 text-slate-700"><span>{fmtDateTime(p.date)} · {p.by}</span><span className="font-semibold text-emerald-700 tabular">{formatIDR(p.amount)}</span></li>)}
+            {list.map(p => (
+              <li key={p.id} className="flex items-center justify-between gap-2 text-slate-700">
+                <span className="min-w-0">{fmtDateTime(p.date)} · {p.by}{p.method && <> · <span className="font-medium text-slate-900">{PAYMENT_LABELS[p.method]}</span></>}</span>
+                <span className="flex flex-shrink-0 items-center gap-1">
+                  <span className="font-semibold text-emerald-700 tabular">{formatIDR(p.amount)}</span>
+                  {supplier && <Btn variant="ghost" size="sm" icon="download" onClick={() => downloadInvoice(p, supplier)} disabled={pdfFor === p.id} aria-label={`Unduh invoice pembayaran ${fmtDateTime(p.date)}`}>{pdfFor === p.id ? 'Membuat…' : 'Invoice'}</Btn>}
+                </span>
+              </li>
+            ))}
           </ul>
         </div>
       );
@@ -6082,7 +6326,7 @@
                         {s.debt > 0 ? <Btn size="sm" onClick={() => open('supplier', s)}>Bayar</Btn> : <Badge tone="green">Lunas</Badge>}
                       </div>
                     </div>
-                    {s.pos.length > 0 && <div className="mt-2"><Toggle id={s.id}>Rincian hutang</Toggle></div>}
+                    {(s.pos.length > 0 || paymentsOf('supplier', s.id).length > 0) && <div className="mt-2"><Toggle id={s.id}>Rincian hutang & invoice</Toggle></div>}
                     {openId === s.id && (
                       <div className="mt-2 space-y-2 rounded-xl bg-slate-50 p-3">
                         {s.pos.map(po => (
@@ -6105,7 +6349,7 @@
                             </div>
                           </div>
                         ))}
-                        <PaymentHistory list={paymentsOf('supplier', s.id)} />
+                        <PaymentHistory list={paymentsOf('supplier', s.id)} supplier={s} />
                       </div>
                     )}
                   </li>
@@ -6159,6 +6403,18 @@
                 <div className="flex justify-between rounded-xl bg-rose-50 p-3 text-sm"><span className="text-rose-900">Sisa {paying.kind === 'supplier' ? 'hutang' : 'kasbon'}</span><span className="font-bold text-rose-700 tabular">{formatIDR(debt)}</span></div>
                 <AmountPresets amount={amount} total={debt} onPick={setAmount} />
                 <Field label="Nominal pembayaran" error={amountError} hint={!amountError && amount < debt ? `Sisa setelah bayar ${formatIDR(debt - amount)}` : null}><MoneyInput autoFocus value={amount} onChange={setAmount} /></Field>
+                <div>
+                  <span className="text-sm font-medium text-slate-700">Metode pembayaran</span>
+                  <div role="radiogroup" aria-label="Metode pembayaran" className="mt-1.5 grid grid-cols-3 gap-2">
+                    {[['cash', 'cash'], ['qris', 'qr'], ['transfer', 'bank']].map(([m, icon]) => (
+                      <button key={m} type="button" role="radio" aria-checked={method === m} onClick={() => setMethod(m)}
+                        className={cx('flex min-h-[44px] items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition-colors', focusRing,
+                          method === m ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-[inset_0_0_0_1px_#1440c8]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50')}>
+                        <SvgIcon name={icon} className="h-4 w-4" />{PAYMENT_LABELS[m]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {paying.kind === 'supplier' && <p className="text-xs text-slate-500">Pembayaran dialokasikan ke PO dengan jatuh tempo paling awal.</p>}
               </div>
             </Modal>
@@ -6272,7 +6528,10 @@
               {db.coupons.map(cp => (
                 <li key={cp.id} className={cx('flex items-center justify-between gap-3 rounded-xl border-2 border-dashed p-4', cp.active ? 'border-brand-300 bg-brand-50' : 'border-slate-200 bg-slate-50')}>
                   <div className="min-w-0">
-                    <p className="font-mono text-base font-bold tracking-wider text-slate-900">{cp.code}</p>
+                    <p className="flex items-center gap-1 font-mono text-base font-bold tracking-wider text-slate-900">{cp.code}
+                      <IconBtn icon="copy" label={`Salin kode ${cp.code}`} iconClass="h-4 w-4" className="h-8 w-8 text-slate-500 hover:bg-white hover:text-brand-700"
+                        onClick={async () => notify(await copyText(cp.code) ? `Kode ${cp.code} disalin.` : 'Gagal menyalin. Salin manual ya.', 'info')} />
+                    </p>
                     <p className="text-sm font-semibold text-brand-800">{cp.type === 'percent' ? `Diskon ${cp.val}%` : `Potongan ${formatIDR(cp.val)}`}</p>
                     <p className="text-xs text-slate-500">Min. belanja {formatIDR(cp.min_spend)}</p>
                   </div>
@@ -6494,7 +6753,7 @@
                       </td>
                       <td className="px-4 py-3"><Badge tone={ROLE_TONES[u.role] || 'slate'}>{ROLE_LABELS[u.role] || u.role}</Badge></td>
                       <td className="px-4 py-3 text-slate-700">{u.role === 'owner' ? '—' : <>{shiftOf(u, work).name}<p className="text-xs text-slate-500">Libur {WEEKDAYS[u.day_off ?? 0]}</p></>}</td>
-                      <td className="px-4 py-3 text-right font-semibold tabular">{u.role === 'owner' ? '—' : formatIDR(u.base_salary)}</td>
+                      <td className="px-4 py-3 text-right text-slate-400">—</td>
                       <td className="px-4 py-3"><Badge tone={u.status === 'Nonaktif' ? 'slate' : 'green'}>{u.status || 'Aktif'}</Badge></td>
                       <td className="px-4 py-3 text-right"><Btn variant="ghost" size="sm" icon="edit" onClick={() => open(u)} aria-label={`Edit ${u.name}`}>Edit</Btn></td>
                     </tr>
@@ -6569,10 +6828,11 @@
     // PERMISSIONS
     // =====================================================================
     function PermissionsMatrixModule({ db, setDb, notify }) {
-      const toggle = (key, label) => {
-        const next = !db.permissions[key];
-        setDb(prev => ({ ...prev, permissions: { ...prev.permissions, [key]: next } }));
-        notify(`${label}: ${next ? 'diizinkan' : 'dibatasi'} untuk kasir.`, 'info');
+      const perm = normalizePermissions(db.permissions);
+      const toggle = (role, key, label) => {
+        const next = !perm[role][key];
+        setDb(prev => { const cur = normalizePermissions(prev.permissions); return { ...prev, permissions: { ...cur, [role]: { ...cur[role], [key]: next } } }; });
+        notify(`${label}: ${next ? 'diizinkan' : 'dibatasi'} untuk ${ROLE_LABELS[role]}.`, 'info');
       };
       const perms = [
         { key: 'can_add_product', label: 'Tambah produk', desc: 'Menambah item baru ke katalog.' },
@@ -6584,16 +6844,27 @@
       ];
       return (
         <div className="space-y-5">
-          <PageHeader title="Hak Akses Karyawan" desc="Atur fitur yang boleh digunakan Supervisor, Kepala Toko, dan Kasir. Bos selalu punya akses penuh." />
+          <PageHeader title="Hak Akses Karyawan" desc="Atur fitur untuk tiap peran: Kasir, Supervisor, dan Kepala Toko. Bos selalu punya akses penuh." />
           <Card>
+            <div className="hidden grid-cols-[minmax(0,1fr)_repeat(3,7rem)] items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-600 sm:grid">
+              <span>Fitur</span>
+              {PERMISSION_ROLES.map(r => <span key={r} className="text-center">{ROLE_LABELS[r]}</span>)}
+            </div>
             <ul className="divide-y divide-slate-100">
               {perms.map(p => (
-                <li key={p.key} className="flex items-center justify-between gap-4 p-4">
+                <li key={p.key} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_repeat(3,7rem)] sm:items-center sm:gap-2">
                   <div>
-                    <p id={`perm-${p.key}`} className="flex items-center gap-2 text-sm font-semibold text-slate-900">{p.label}{p.risky && <Badge tone="amber">Sensitif</Badge>}</p>
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">{p.label}{p.risky && <Badge tone="amber">Sensitif</Badge>}</p>
                     <p className="text-sm text-slate-600">{p.desc}</p>
                   </div>
-                  <Switch checked={!!db.permissions[p.key]} onChange={() => toggle(p.key, p.label)} labelledBy={`perm-${p.key}`} />
+                  <div className="grid grid-cols-3 gap-2 sm:contents">
+                    {PERMISSION_ROLES.map(r => (
+                      <div key={r} className="flex flex-col items-center gap-1.5 rounded-xl bg-slate-50 py-2 sm:bg-transparent sm:py-0">
+                        <span className="text-xs font-medium text-slate-600 sm:hidden">{ROLE_LABELS[r]}</span>
+                        <Switch checked={!!perm[r][p.key]} onChange={() => toggle(r, p.key, p.label)} label={`${p.label} untuk ${ROLE_LABELS[r]}`} />
+                      </div>
+                    ))}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -6865,7 +7136,7 @@
       const coordsInvalid = form.location.lat === '' || form.location.lng === '' || !(Math.abs(form.location.lat) <= 90 && Math.abs(form.location.lng) <= 180);
       const preview = coordsInvalid ? null : computePrayerTimes(nowParts.y, nowParts.m, nowParts.d, Number(form.location.lat), Number(form.location.lng), Number(form.location.tz));
       const lastSale = allSalesOf(db).find(isValidSale);
-      const sampleSale = { ...SAMPLE_RECEIPT, cashier: lastSale?.cashier || SAMPLE_RECEIPT.cashier };
+      const sampleSale = { ...SAMPLE_RECEIPT, queue_no: 12, cashier: lastSale?.cashier || SAMPLE_RECEIPT.cashier };
 
       const useDeviceLocation = () => {
         if (!navigator.geolocation) return notify('Perangkat tidak mendukung deteksi lokasi.', 'warn');
@@ -6902,7 +7173,7 @@
       const updateBank = (id, k, v) => setForm(f => ({ ...f, bank_accounts: f.bank_accounts.map(b => b.id === id ? { ...b, [k]: v } : b) }));
       const receiptToggles = [
         ['show_logo', 'Logo toko'], ['show_address', 'Alamat toko'], ['show_phone', 'Nomor telepon'], ['show_cashier', 'Nama kasir yang berjaga'],
-        ['show_customer', 'Nama pelanggan'], ['show_discount', 'Diskon & voucher'], ['show_tax', 'Pajak'], ['show_brand', `Tulisan "Dibuat dengan ${APP_NAME}"`]
+        ['show_customer', 'Nama pelanggan'], ['show_discount', 'Diskon & voucher'], ['show_tax', 'Pajak'], ['show_queue', 'Nomor antrian (mulai dari 1 setiap hari)'], ['show_brand', `Tulisan "Dibuat dengan ${APP_NAME}"`]
       ];
 
       return (
@@ -7108,9 +7379,8 @@
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
       }, [onClose]);
-      const stockOf = (id) => products.find(p => p.id === productIdOf({ id }))?.stock ?? Infinity;
       const changeQty = (it, delta) => {
-        if (delta > 0 && it.qty >= stockOf(it.id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
+        if (delta > 0 && unitsSharingStock(cart, products, it.id) >= lineStock(products, it.id)) return notify('Jumlah melebihi stok tersedia.', 'warn');
         setCart(prev => prev.map(c => c.id === it.id ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
       };
       const remove = (it) => setCart(prev => prev.filter(c => c.id !== it.id));
