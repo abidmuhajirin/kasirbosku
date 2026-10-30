@@ -4237,9 +4237,9 @@
                   </div>
                 </div>
               ) : <>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label htmlFor="pos-customer" className="sr-only">Pelanggan</label>
-                <select id="pos-customer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'h-10 !min-h-[40px] min-w-0 flex-1 cursor-pointer')}>
+                <select id="pos-customer" value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className={cx(inputCls, 'h-10 !min-h-[40px] w-auto min-w-[10rem] flex-1 cursor-pointer')}>
                   {db.customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.debt > 0 ? ` · kasbon ${formatIDR(c.debt)}` : ''}{c.deposit > 0 ? ` · saldo ${formatIDR(c.deposit)}` : ''}</option>)}
                 </select>
                 <IconBtn icon="userPlus" label="Tambah pelanggan baru" iconClass="h-[18px] w-[18px]" onClick={() => setQuickCustomer({ name: '', phone: '' })} className="h-10 w-10 border border-slate-300" />
@@ -5628,7 +5628,7 @@
                       </div>
                       <IconBtn icon="edit" label={`Edit ${c.name}`} iconClass="h-4 w-4" onClick={() => { setForm({ ...c }); setSubmitted(false); }} className="-mr-2 -mt-2 h-9 w-9" />
                     </div>
-                    <dl className="mt-4 flex flex-wrap justify-between gap-x-2 gap-y-2 whitespace-nowrap border-t border-slate-100 pt-3 text-[13px]">
+                    <dl className="mt-4 flex flex-wrap justify-between gap-x-1 gap-y-2 whitespace-nowrap border-t border-slate-100 pt-3 text-xs sm:text-[13px]">
                       <div><dt className="text-xs text-slate-500">Kunjungan</dt><dd className="font-semibold text-slate-900 tabular">{c.visits}×</dd></div>
                       <div><dt className="text-xs text-slate-500">Total belanja</dt><dd className="font-semibold text-slate-900 tabular">{formatIDR(c.total_spent)}</dd></div>
                       <div><dt className="text-xs text-slate-500">Kasbon</dt><dd className={cx('font-semibold tabular', c.debt > 0 ? 'text-rose-600' : 'text-slate-400')}>{c.debt > 0 ? formatIDR(c.debt) : '—'}</dd></div>
