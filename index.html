@@ -2746,6 +2746,7 @@
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold leading-tight">{currentUser.name}</p>
                     <p className="text-xs leading-tight text-brand-100">{ROLE_LABELS[currentUser.role]}</p>
+                    {license.expires_at && <p className="text-xs leading-tight text-brand-100">Expired lisensi {fmtDateShort(dateKey(new Date(license.expires_at)))}</p>}
                   </div>
                   <button type="button" aria-label="Keluar" title="Keluar" onClick={() => sync.status.pending ? setConfirmLogout(true) : logout()}
                     className="inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-brand-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
@@ -4601,7 +4602,7 @@
     // =====================================================================
     const RANGES = [
       { value: 'today', label: 'Hari ini' }, { value: 'yesterday', label: 'Kemarin' }, { value: '7d', label: '7 hari' },
-      { value: '30d', label: '30 hari' }, { value: 'month', label: 'Bulan ini' }, { value: 'custom', label: 'Pilih tanggal' }
+      { value: '30d', label: '30 hari' }, { value: 'month', label: 'Bulan ini' }, { value: 'year', label: 'Tahun ini' }, { value: 'custom', label: 'Pilih tanggal' }
     ];
     function rangeBounds(id, from, to) {
       const today = dateKey();
@@ -4611,6 +4612,7 @@
         case '7d': return [addDays(today, -6), today];
         case '30d': return [addDays(today, -29), today];
         case 'month': return [today.slice(0, 8) + '01', today];
+        case 'year': return [today.slice(0, 5) + '01-01', today];
         default: return [from || today, to || today];
       }
     }
@@ -4645,12 +4647,14 @@
       // A clicked bar narrows the product and transaction lists on screen. Exports always cover the whole period.
       const [pick, setPick] = useState(null);
       useEffect(() => setPick(null), [from, to, cashierFilter, methodFilter]);
-      const inPick = (s) => !pick || (singleDay ? new Date(s.date).getHours() === pick.key : saleDay(s) === pick.key);
+      // Long periods would give a bar too thin to read, so they group by month
+      const chartUnit = singleDay ? 'hour' : (new Date(to) - new Date(from)) / 86400000 > 62 ? 'month' : 'day';
+      const inPick = (s) => !pick || (chartUnit === 'hour' ? new Date(s.date).getHours() === pick.key : saleDay(s).startsWith(pick.key));
       const pickBar = (chart) => {
         const bar = chart?.activePayload?.[0]?.payload;
         if (!bar?.total) return;
         setLimit(30);
-        setPick(p => p?.key === bar.key ? null : { key: bar.key, label: singleDay ? `pukul ${bar.label}.00` : fmtDateShort(bar.key) });
+        setPick(p => p?.key === bar.key ? null : { key: bar.key, label: chartUnit === 'hour' ? `pukul ${bar.label}.00` : chartUnit === 'month' ? monthLabel(bar.key) : fmtDateShort(bar.key) });
       };
 
       // Everyone sees the whole store's sales and can narrow them to one cashier
@@ -4693,7 +4697,13 @@
           });
         }
         const out = [];
-        for (let k = from; k <= to && out.length < 93; k = addDays(k, 1)) {
+        if (chartUnit === 'month') {
+          for (let m = from.slice(0, 7); m <= to.slice(0, 7); m = dateKey(new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).slice(0, 7)) {
+            out.push({ key: m, label: new Date(m + '-01T00:00:00').toLocaleDateString('id-ID', { month: 'short', year: '2-digit' }), total: valid.filter(s => saleDay(s).startsWith(m)).reduce((a, s) => a + s.total, 0) });
+          }
+          return out;
+        }
+        for (let k = from; k <= to; k = addDays(k, 1)) {
           out.push({ key: k, label: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), total: valid.filter(s => saleDay(s) === k).reduce((a, s) => a + s.total, 0) });
         }
         return out;
@@ -5004,7 +5014,7 @@
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
             <Card className="p-5 lg:col-span-8">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-base font-bold text-slate-900">{singleDay ? 'Penjualan per jam' : 'Penjualan per hari'}</h3>
+                <h3 className="text-base font-bold text-slate-900">{{ hour: 'Penjualan per jam', day: 'Penjualan per hari', month: 'Penjualan per bulan' }[chartUnit]}</h3>
                 {pick
                   ? <Btn variant="ghost" size="sm" icon="x" onClick={() => setPick(null)}>Tampilkan semua</Btn>
                   : valid.length > 0 && <span className="text-xs text-slate-500">Klik batang untuk melihat rinciannya</span>}
@@ -5018,7 +5028,8 @@
                       <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#475569' }} interval="preserveStartEnd" />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#475569' }} tickFormatter={v => v >= 1e6 ? `${(v / 1e6).toFixed(1)}jt` : `${Math.round(v / 1000)}rb`} width={48} />
                       <Tooltip formatter={(v) => [formatIDR(v), 'Penjualan']} labelFormatter={(l) => singleDay ? `Pukul ${l}.00` : l} cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0', fontSize: 13 }} />
-                      <Bar dataKey="total" fill="#1a4fe6" radius={[6, 6, 0, 0]}>
+                      {/* No animation: a click during it left the bars stuck, without the picked colour */}
+                      <Bar dataKey="total" fill="#1a4fe6" radius={[6, 6, 0, 0]} isAnimationActive={false}>
                         {chartData.map(d => <Cell key={d.key} fill={pick?.key === d.key ? '#f8cb2e' : '#1a4fe6'} />)}
                       </Bar>
                     </BarChart>
@@ -5096,7 +5107,7 @@
 
           <Card>
             <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({shownTx.length}{pick ? ` · ${pick.label}` : ''})</span></h3>
+              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({shownTx.length}){pick ? ` · ${pick.label}` : ''}</span></h3>
               <div className="flex flex-wrap items-center gap-3">
                 <SearchInput id="tx-search" value={search} onChange={setSearch} placeholder="Cari nota, pelanggan, produk, metode, lunas…" className="w-full sm:w-80" />
                 <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={showVoid} onChange={e => setShowVoid(e.target.checked)} className="h-4 w-4 rounded accent-brand-700" />Tampilkan yang dibatalkan</label>
