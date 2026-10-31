@@ -5271,6 +5271,9 @@
       { key: 'unit', header: 'Satuan', width: 10 },
       { key: 'no_stock', header: 'Tanpa stok', width: 12 }
     ];
+    // The template's sample row. Left in the file, it is skipped, so it never lands in the catalog.
+    const IMPORT_EXAMPLE_NAME = 'Contoh Es Kopi Susu';
+    const importExample = (db) => [IMPORT_EXAMPLE_NAME, 'CONTOH-001', db.categories.find(c => c !== 'Semua') || 'Minuman', 8000, 18000, 15000, 50, 5, 'Cup', 'Tidak'];
     const importHeader = (c) => c.required ? `${c.header} *` : c.header;
     const headerKey = (text) => String(text ?? '').replace(/\*/g, '').trim().toLowerCase();
     // Spreadsheet text that starts with these runs as a formula when the report is opened
@@ -5347,7 +5350,7 @@
       const missing = IMPORT_COLUMNS.filter(c => c.required && columnOf[c.key] === undefined).map(c => c.header);
       if (missing.length) throw new Error(`Kolom wajib tidak ada: ${missing.join(', ')}.`);
 
-      const rows = table.map((r, i) => ({ r: r || [], line: i + 1 })).slice(headerAt + 1).filter(({ r }) => r.some(c => String(c ?? '').trim() !== ''));
+      const rows = table.map((r, i) => ({ r: r || [], line: i + 1 })).slice(headerAt + 1).filter(({ r }) => r.some(c => String(c ?? '').trim() !== '') && String(r[columnOf.name] ?? '').trim() !== IMPORT_EXAMPLE_NAME);
       if (!rows.length) throw new Error('File belum berisi produk.');
       if (rows.length > IMPORT_MAX_ROWS) throw new Error(`Maksimal ${IMPORT_MAX_ROWS} produk per file. File ini berisi ${rows.length}.`);
 
@@ -5429,7 +5432,8 @@
     }
     async function downloadImportTemplate(db, how) {
       const headers = IMPORT_COLUMNS.map(importHeader);
-      if (how === 'csv') return downloadCsv('Template_Produk_KasirBosku.csv', [headers], ';');
+      const csvRows = [headers, importExample(db)];
+      if (how === 'csv') return downloadCsv('Template_Produk_KasirBosku.csv', csvRows, ';');
       try {
         if (!window.ExcelJS) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js');
         const wb = new window.ExcelJS.Workbook();
@@ -5437,7 +5441,9 @@
         ws.columns = IMPORT_COLUMNS.map((c, i) => ({ header: headers[i], width: c.width }));
         ws.getRow(1).eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A4FE6' } }; c.alignment = { vertical: 'middle' }; });
         ws.getRow(1).height = 22;
-        const cats = db.categories.filter(c => c !== 'Semua' && !/[",]/.test(c)).join(',');
+        ws.getRow(2).values = importExample(db);
+        ws.getRow(2).font = { italic: true, color: { argb: 'FF64748B' } };
+        const cats =db.categories.filter(c => c !== 'Semua' && !/[",]/.test(c)).join(',');
         for (let r = 2; r <= IMPORT_MAX_ROWS + 1; r++) {
           if (cats && cats.length < 250) ws.getCell(r, 3).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`"${cats}"`] };
           ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Ya,Tidak"'] };
@@ -5445,6 +5451,7 @@
         const guide = wb.addWorksheet('Petunjuk');
         guide.columns = [{ width: 18 }, { width: 80 }];
         [['Kolom', 'Cara mengisi'],
+          ['Baris contoh', `Baris "${IMPORT_EXAMPLE_NAME}" hanya contoh dan tidak ikut diimpor. Boleh dibiarkan atau ditimpa.`],
           ['Nama produk *', 'Wajib. Maksimal 80 karakter.'],
           ['SKU', 'Boleh kosong, aplikasi membuatkan. Tidak boleh sama dengan SKU lain. Nama foto di ZIP mengikuti SKU, contoh KOP-001.jpg.'],
           ['Kategori *', 'Wajib. Kategori yang belum ada dibuat otomatis kalau diimpor oleh Bos.'],
@@ -5465,7 +5472,7 @@
         setTimeout(() => URL.revokeObjectURL(url), 30000);
         return 'xlsx';
       } catch {
-        downloadCsv('Template_Produk_KasirBosku.csv', [headers], ';');
+        downloadCsv('Template_Produk_KasirBosku.csv', csvRows, ';');
         return 'csv';
       }
     }
@@ -5487,13 +5494,11 @@
       const withPhoto = photos ? valid.filter(r => r.data.sku && photos.has(r.data.sku)).length : 0;
       const unusedPhotos = photos ? [...photos.keys()].filter(k => !valid.some(r => r.data.sku === k)) : [];
 
-      const pickTable = async (f) => {
-        if (!f) return;
+      const pickTable = (f) => { if (f) { setError(''); setFile(f); } };
+      const checkFile = async () => {
         setError(''); setBusy('Memeriksa file…');
-        try {
-          const checked = checkImportRows(await readImportRows(f), db, isOwner);
-          setFile(f); setRows(checked); setStep('check');
-        } catch (e) { setError(e.message); }
+        try { setRows(checkImportRows(await readImportRows(file), db, isOwner)); setStep('check'); }
+        catch (e) { setError(e.message); }
         finally { setBusy(''); }
       };
       const pickZip = async (f) => {
@@ -5588,7 +5593,21 @@
         <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-600">{label}</p><p className={cx('text-xl font-bold tabular', tone || 'text-slate-900')}>{value}</p></div>
       );
 
-      const footer = step === 'pick' ? <><span className="flex-1" /><Btn variant="secondary" onClick={onClose}>Tutup</Btn></>
+      const zipSection = (
+        <>
+          <p className="text-sm font-semibold text-slate-900">{step === 'pick' ? '3. Foto produk (opsional)' : 'Foto produk (opsional)'}</p>
+          <p className="mt-0.5 text-sm text-slate-600">Unggah ZIP berisi foto dengan nama file sama seperti SKU, contoh KOP-001.jpg.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            {filePicker('import-zip', '.zip', pickZip, photos ? 'Ganti ZIP' : 'Pilih ZIP')}
+            {photos && <span className="min-w-0 break-all text-sm text-slate-700">{step === 'pick' ? `${zipName}: ${photos.size} foto` : `${zipName}: ${withPhoto} foto cocok${unusedPhotos.length ? `, ${unusedPhotos.length} tidak terpakai` : ''}`}</span>}
+          </div>
+        </>
+      );
+      const footer = step === 'pick' ? <>
+          <span className="flex-1" />
+          <Btn variant="secondary" onClick={onClose}>Tutup</Btn>
+          <Btn icon="check" disabled={!file || !!busy} onClick={checkFile}>Periksa file</Btn>
+        </>
         : step === 'check' ? <>
           <Btn variant="secondary" onClick={() => { setStep('pick'); setRows([]); setFile(null); setError(''); }}>Ganti file</Btn>
           <span className="flex-1" />
@@ -5607,7 +5626,7 @@
             <ol className="space-y-5">
               <li>
                 <p className="text-sm font-semibold text-slate-900">1. Unduh template</p>
-                <p className="mt-0.5 text-sm text-slate-600">Kolom wajib bertanda bintang. Varian ditambahkan dari Edit produk setelah impor.</p>
+                <p className="mt-0.5 text-sm text-slate-600">Kolom wajib bertanda bintang. Baris pertama hanya contoh dan tidak ikut diimpor. Varian ditambahkan dari Edit produk setelah impor.</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Btn variant="secondary" icon="download" onClick={async () => { const how = await downloadImportTemplate(db, 'xlsx'); if (how === 'csv') notify('Template diunduh sebagai CSV (Excel butuh internet).', 'info'); }}>Template Excel</Btn>
                   <Btn variant="secondary" icon="download" onClick={() => downloadImportTemplate(db, 'csv')}>Template CSV</Btn>
@@ -5616,8 +5635,12 @@
               <li>
                 <p className="text-sm font-semibold text-slate-900">2. Unggah file yang sudah diisi</p>
                 <p className="mt-0.5 text-sm text-slate-600">Format .xlsx atau .csv, maksimal {IMPORT_MAX_ROWS} produk. Belum ada yang tersimpan sampai kamu konfirmasi.</p>
-                <div className="mt-2">{filePicker('import-table', '.xlsx,.csv', pickTable, 'Pilih file')}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {filePicker('import-table', '.xlsx,.csv', pickTable, file ? 'Ganti file' : 'Pilih file')}
+                  {file && <span className="min-w-0 break-all text-sm text-slate-700">{file.name}</span>}
+                </div>
               </li>
+              <li>{zipSection}</li>
             </ol>
           )}
 
@@ -5628,14 +5651,7 @@
                 {stat('Siap diimpor', valid.length, 'text-emerald-700')}
                 {stat('Bermasalah', problems.length, problems.length ? 'text-rose-600' : undefined)}
               </div>
-              <section className="rounded-xl border border-slate-200 p-3">
-                <p className="text-sm font-semibold text-slate-900">Foto produk (opsional)</p>
-                <p className="mt-0.5 text-sm text-slate-600">Unggah ZIP berisi foto dengan nama file sama seperti SKU, contoh KOP-001.jpg.</p>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  {filePicker('import-zip', '.zip', pickZip, photos ? 'Ganti ZIP' : 'Pilih ZIP')}
-                  {photos && <span className="text-sm text-slate-700">{zipName}: {withPhoto} foto cocok{unusedPhotos.length ? `, ${unusedPhotos.length} tidak terpakai` : ''}</span>}
-                </div>
-              </section>
+              <section className="rounded-xl border border-slate-200 p-3">{zipSection}</section>
               {problems.length > 0 && (
                 <section>
                   <h4 className="mb-1.5 text-sm font-bold text-rose-700">Tidak akan diimpor ({problems.length})</h4>
