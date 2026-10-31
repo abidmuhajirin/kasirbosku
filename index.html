@@ -2090,7 +2090,8 @@
         for (const key of Object.keys(db)) {
           const a = prev[key], b = db[key];
           if (a === b) continue;
-          if (DOC_KEYS.includes(key)) { note('_doc', key, b, a); continue; }
+          // Before the first pull this device only has empty defaults, which must never replace the store's settings
+          if (DOC_KEYS.includes(key)) { if (s.cursor) note('_doc', key, b, a); continue; }
           if (!Array.isArray(b)) continue;
           const before = new Map((Array.isArray(a) ? a : []).filter(r => r && r.id != null).map(r => [String(r.id), r]));
           for (const r of b) {
@@ -2668,7 +2669,7 @@
         return () => { clearInterval(timer); window.removeEventListener('online', flushSelfies); };
       }, [flushSelfies]);
       // Resolves with the photo, or null when the person cancels
-      const takeSelfie = (label, v) => new Promise(resolve => setSelfieAsk({ label, coords: v.coords, address: v.address, resolve }));
+      const takeSelfie = (label, v) => new Promise(resolve => setSelfieAsk({ label, coords: v.coords, address: v.address, problem: v.problem, resolve }));
       const keepSelfie = (att, field, photo) => {
         if (!cloud) return photo;
         const item = { key: generateId('SF'), att, field, photo };
@@ -2678,9 +2679,9 @@
         return 'pending';
       };
       const findAddress = async (coords) => {
-        if (!cloud || !coords) return '';
-        try { return (await apiFetch(`/api/address?lat=${coords.latitude}&lng=${coords.longitude}`, { token: latestToken.current })).address; }
-        catch { return ''; }
+        if (!cloud || !coords) return { address: '', problem: '' };
+        try { return { address: (await apiFetch(`/api/address?lat=${coords.latitude}&lng=${coords.longitude}`, { token: latestToken.current })).address, problem: '' }; }
+        catch (e) { return { address: '', problem: e.message }; }
       };
       const verifyPresence = async () => {
         const notes = [];
@@ -2717,16 +2718,16 @@
         }
         const skew = Math.round(Math.abs(clockOffset) / 60000);
         if (skew >= 5) notes.push(`jam HP selisih ${skew} menit, dicatat dengan jam server`);
-        let address = '';
+        let place = {};
         if (work.attendance_selfie) {
           notes.push('foto selfie');
           setClocking(true);
           try {
             if (!coords) coords = await getPosition();
-            address = await findAddress(coords);
+            place = await findAddress(coords);
           } catch { /* the photo says the location was not read */ } finally { setClocking(false); }
         }
-        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi', coords, address };
+        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi', coords, ...place };
       };
 
       const clockIn = async () => {
@@ -2847,7 +2848,7 @@
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:shadow-lg">Lewati ke konten</a>
 
           {codeAsk && <AttendanceCodePrompt onDone={(c) => { codeAsk.resolve(c); setCodeAsk(null); }} />}
-          {selfieAsk && <SelfieCamera label={selfieAsk.label} lines={() => [
+          {selfieAsk && <SelfieCamera label={selfieAsk.label} problem={selfieAsk.problem} lines={() => [
             `${currentUser.name} · Absen ${selfieAsk.label}`,
             `${fmtDateTime(new Date(trueNow()).toISOString())} · ${db.business.name}`,
             ...(selfieAsk.address ? [selfieAsk.address] : []),
@@ -6739,7 +6740,7 @@
     const REWARD_TYPES = ['Karyawan Teladan', 'Tepat Waktu', 'Target Penjualan', 'Lembur Ekstra', 'Lainnya'];
 
     // Live camera only: there is no way to pick a file, so a saved picture cannot stand in for the person
-    function SelfieCamera({ label, lines, onDone }) {
+    function SelfieCamera({ label, lines, problem, onDone }) {
       const videoRef = useRef(null);
       const [facing, setFacing] = useState('user');
       const [shot, setShot] = useState('');
@@ -6783,6 +6784,7 @@
             <span className="flex-1" />
             <Btn icon="photo" disabled={!ready} onClick={capture}>Ambil foto</Btn>
           </>}>
+          {problem && <p className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900" role="status">Alamat tidak terbaca, foto memakai koordinat. {problem}</p>}
           {shot
             ? <img src={shot} alt={`Hasil foto absen ${label}`} width="720" height="540" className="h-auto w-full rounded-xl" />
             : error
