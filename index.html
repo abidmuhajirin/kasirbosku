@@ -94,7 +94,7 @@
     const { useState, useEffect, useMemo, useRef, useCallback, useId } = React;
 
     const RechartsObj = window.Recharts || {};
-    const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } = RechartsObj;
+    const { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend } = RechartsObj;
 
     const APP_NAME = 'KasirBosku';
     const STORAGE_KEY = 'kasirbosku_v3';
@@ -726,16 +726,21 @@
       );
     }
 
-    // Plan badge beside the KasirBosku name: silver tick monthly, green tick yearly, red TRIAL for the 7-day trial
+    // Verified seal: a circle with eight soft scallops
+    const SEAL_D = 'M' + Array.from({ length: 120 }, (_, i) => {
+      const a = i / 120 * 2 * Math.PI, r = 10.4 + 1.2 * Math.cos(8 * a);
+      return `${(12 + r * Math.sin(a)).toFixed(2)} ${(12 - r * Math.cos(a)).toFixed(2)}`;
+    }).join('L') + 'Z';
+    // Plan badge beside the KasirBosku name: silver seal monthly, green seal yearly, red TRIAL for the 7-day trial
     function PlanBadge({ plan }) {
       if (plan === 'trial') return <span className="inline-flex h-5 items-center rounded-md bg-rose-600 px-1.5 text-[11px] font-bold uppercase leading-none tracking-wide text-white" title="Paket Trial 7 hari">Trial</span>;
-      const tone = plan === 'tahunan' ? '#34d399' : plan === 'bulanan' ? '#cbd5e1' : null;
+      const tone = plan === 'tahunan' ? '#16a34a' : plan === 'bulanan' ? '#cbd5e1' : null;
       if (!tone) return null;
       return (
         <span className="inline-flex flex-shrink-0" title={plan === 'tahunan' ? 'Langganan tahunan' : 'Langganan bulanan'}>
-          <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true">
-            <path fill={tone} d="M12 1.5l2.6 1.9 3.2-.2 1 3.1 2.6 1.9-1 3 1 3.1-2.6 1.9-1 3.1-3.2-.2L12 22.5l-2.6-1.9-3.2.2-1-3.1-2.6-1.9 1-3.1-1-3 2.6-1.9 1-3.1 3.2.2z" />
-            <path fill="none" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M8 12.2l2.6 2.6L16.2 9" />
+          <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+            <path fill={tone} d={SEAL_D} />
+            <path fill="none" stroke={plan === 'tahunan' ? '#ffffff' : '#1e293b'} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" d="M7.6 12.3l3 3 5.8-6.2" />
           </svg>
           <span className="sr-only">{plan === 'tahunan' ? 'Terverifikasi, langganan tahunan' : 'Terverifikasi, langganan bulanan'}</span>
         </span>
@@ -751,8 +756,12 @@
     }
 
     const AVATAR_COLORS = ['bg-brand-700', 'bg-indigo-600', 'bg-rose-600', 'bg-amber-700', 'bg-emerald-700', 'bg-purple-600'];
-    function Avatar({ name, className = 'h-9 w-9 text-sm' }) {
+    // The account's photo, or initials when there is none or it fails to load
+    function Avatar({ name, src, className = 'h-9 w-9 text-sm' }) {
+      const [broken, setBroken] = useState(false);
+      useEffect(() => setBroken(false), [src]);
       const h = [...(name || '')].reduce((a, c) => a + c.charCodeAt(0), 0);
+      if (src && !broken) return <img src={src} alt="" width="40" height="40" onError={() => setBroken(true)} className={cx('flex-shrink-0 rounded-full object-cover', className)} />;
       return <span className={cx('inline-flex flex-shrink-0 items-center justify-center rounded-full font-bold text-white', AVATAR_COLORS[h % AVATAR_COLORS.length], className)} aria-hidden="true">{initialsOf(name)}</span>;
     }
 
@@ -771,7 +780,7 @@
       );
     }
 
-    function ImageUpload({ value, onChange, label, hint, mode = 'cover', aspect = 'aspect-square', options }) {
+    function ImageUpload({ value, onChange, label, hint, mode = 'cover', aspect = 'aspect-square', options, formats }) {
       const inputId = useId();
       const [error, setError] = useState('');
       const [busy, setBusy] = useState(false);
@@ -779,6 +788,7 @@
 
       const handleFile = async (file) => {
         if (!file) return;
+        if (formats && !formats.includes(file.type)) { setError('Foto harus berformat JPG atau PNG.'); return; }
         setError(''); setBusy(true);
         try { onChange(await imageFileToDataUrl(file, { mode, ...options })); }
         catch (e) { setError(e.message); }
@@ -801,7 +811,7 @@
                     <SvgIcon name="photo" className="h-7 w-7" />
                     <span className="text-xs font-semibold">{busy ? 'Memproses…' : 'Pilih foto'}</span>
                   </span>}
-              <input id={inputId} type="file" accept="image/*" className="sr-only" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
+              <input id={inputId} type="file" accept={formats ? formats.join(',') : 'image/*'} className="sr-only" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
             </label>
             <div className="min-w-0 space-y-2 pt-1">
               <p className="text-xs text-slate-500">{hint || 'Ketuk kotak untuk memilih foto dari galeri atau kamera. Bisa juga tarik & lepas file.'} Foto otomatis dikecilkan agar hemat memori dan kuota.</p>
@@ -1031,7 +1041,7 @@
     // =====================================================================
     // DOMAIN HELPERS
     // =====================================================================
-    const PAYMENT_LABELS = { qris: 'QRIS', cash: 'Tunai', transfer: 'Transfer', bayar_nanti: 'Kasbon', deposit: 'Ninggal Uang' };
+    const PAYMENT_LABELS = { qris: 'QRIS', cash: 'Tunai', transfer: 'Transfer', bayar_nanti: 'Kasbon', deposit: 'Deposit' };
     // 'owner' stays the internal id so saved data keeps working; it is shown as "Bos"
     const ROLE_LABELS = { owner: 'Bos', supervisor: 'Supervisor', kepala_toko: 'Kepala Toko', kasir: 'Kasir', investor: 'Investor' };
     const ROLE_TONES = { owner: 'purple', supervisor: 'blue', kepala_toko: 'amber', kasir: 'teal', investor: 'green' };
@@ -1152,7 +1162,11 @@
       const hpp = Math.round(sales.reduce((a, s) => a + saleCost(s, db.products), 0));
       const expenses = db.expenses.filter(e => inRange(e.date)).reduce((a, e) => a + e.amount, 0);
       const grossProfit = revenue - hpp;
-      return { count: sales.length, revenue, taxCollected, hpp, grossProfit, expenses, netProfit: grossProfit - expenses };
+      const discount = sales.reduce((a, s) => a + (s.discount || 0), 0);
+      const depositIn = sales.reduce((a, s) => a + (s.deposit_in || 0), 0);
+      const depositUsed = sales.reduce((a, s) => a + (s.deposit_used || 0), 0);
+      const salesNet = revenue - depositIn + depositUsed;
+      return { count: sales.length, revenue, taxCollected, hpp, grossProfit, expenses, netProfit: grossProfit - expenses, discount, depositIn, depositUsed, salesNet };
     }
 
     // ---------- Pricing: product "harga coret" and seasonal promos ----------
@@ -1370,6 +1384,15 @@
       doc.setFont('helvetica', 'normal'); doc.setTextColor(30);
     }
     const pdfMoney = (v) => formatIDR(v).replace(/\u00a0/g, ' ');
+    function pdfFooter(doc, who) {
+      const pages = doc.getNumberOfPages();
+      doc.setFontSize(8); doc.setTextColor(140);
+      for (let i = 1; i <= pages; i++) {
+        doc.setPage(i);
+        doc.text(`Dibuat dengan ${APP_NAME} \u00b7 ${fmtDateTime(new Date().toISOString())} \u00b7 ${who}`, 40, 820);
+        doc.text(`Halaman ${i} dari ${pages}`, 555, 820, { align: 'right' });
+      }
+    }
 
     async function ensureJsPdf() {
       if (!window.jspdf) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
@@ -1449,6 +1472,13 @@
     const COUNTER_FIELDS = { products: ['stock'], customers: ['debt', 'total_spent', 'visits', 'deposit'] };
     // Each staff role has its own switches; the Bos changes them in Hak Akses
     const PERMISSION_ROLES = ['kasir', 'supervisor', 'kepala_toko'];
+    const ATTENDANCE_SECTIONS = [
+      { value: 'today', key: 'can_att_today', label: 'Hari ini', desc: 'Melihat kehadiran hari ini dan mencatat karyawan sakit atau izin.' },
+      { value: 'schedule', key: 'can_att_schedule', label: 'Shift & aturan', desc: 'Mengubah shift, hari libur, dan aturan lembur. Pengaturan cegah absen dari luar toko tetap khusus Bos.', risky: true },
+      { value: 'recap', key: 'can_att_recap', label: 'Rekap & gaji', desc: 'Melihat rekap kehadiran dan gaji semua karyawan.', risky: true },
+      { value: 'overtime', key: 'can_att_overtime', label: 'Lembur', desc: 'Menyetujui atau menolak lembur karyawan lain.' },
+      { value: 'rewards', key: 'can_att_rewards', label: 'Reward', desc: 'Memberi reward ke karyawan lain.', risky: true }
+    ];
     const DEFAULT_PERMISSIONS = {
       kasir: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: false, can_view_finance: false, can_manage_suppliers: false },
       supervisor: { can_add_product: true, can_edit_product: true, can_delete_product: false, can_give_discount: true, can_void_sale: true, can_view_finance: false, can_manage_suppliers: false },
@@ -1738,7 +1768,7 @@
         const before = byId([...(prev.offlineQueue || []), ...(prev.sales || [])]);
         [...(next.offlineQueue || []), ...(next.sales || [])].forEach(sale => {
           const old = before.get(String(sale.id));
-          if (!old) out.push({ kind: 'penjualan', action: `${sale.payment_method === 'bayar_nanti' ? 'Mencatat kasbon' : 'Transaksi'} ${sale.receipt_no}`, detail: `${formatIDR(sale.total)} · ${PAYMENT_LABELS[sale.payment_method] || sale.payment_method} · ${sale.customer_name} · ${sale.items.reduce((a, it) => a + it.qty, 0)} item${sale.deposit_in ? ` · ninggal uang ${formatIDR(sale.deposit_in)}` : ''}${sale.deposit_used ? ` · potong saldo ${formatIDR(sale.deposit_used)}` : ''}` });
+          if (!old) out.push({ kind: 'penjualan', action: `${sale.payment_method === 'bayar_nanti' ? 'Mencatat kasbon' : 'Transaksi'} ${sale.receipt_no}`, detail: `${formatIDR(sale.total)} · ${PAYMENT_LABELS[sale.payment_method] || sale.payment_method} · ${sale.customer_name} · ${sale.items.reduce((a, it) => a + it.qty, 0)} item${sale.deposit_in ? ` · deposit ${formatIDR(sale.deposit_in)}` : ''}${sale.deposit_used ? ` · potong saldo ${formatIDR(sale.deposit_used)}` : ''}` });
           else if (old.status !== 'void' && sale.status === 'void') out.push({ kind: 'penjualan', action: `Membatalkan transaksi ${sale.receipt_no}`, detail: `${formatIDR(sale.total)} · alasan: ${sale.void_reason || '-'}` });
           else if (!old.void_request && sale.void_request) out.push({ kind: 'penjualan', action: `Mengajukan pembatalan ${sale.receipt_no}`, detail: sale.void_request.reason || '' });
         });
@@ -1781,7 +1811,7 @@
       if (prev.deposit_moves !== next.deposit_moves) {
         const before = byId(prev.deposit_moves);
         (next.deposit_moves || []).forEach(m => {
-          if (!before.has(String(m.id))) out.push({ kind: 'pelanggan', action: m.kind === 'refund' ? 'Mengembalikan uang pelanggan' : 'Memindahkan saldo Ninggal Uang', detail: `${m.customer_name}${m.to_name ? ` ke ${m.to_name}` : ''} · ${formatIDR(m.amount)}` });
+          if (!before.has(String(m.id))) out.push({ kind: 'pelanggan', action: m.kind === 'refund' ? 'Mengembalikan uang pelanggan' : 'Memindahkan saldo Deposit', detail: `${m.customer_name}${m.to_name ? ` ke ${m.to_name}` : ''} · ${formatIDR(m.amount)}` });
         });
       }
       // Ordinary records: added, changed (with the fields that changed), deleted
@@ -2712,7 +2742,7 @@
               <p className="px-3 text-[11px] text-brand-200">crafted by <a href={MAKER_URL} target="_blank" rel="noreferrer" className="font-semibold text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">menjadibos.com</a></p>
               {cloud ? (
                 <div className="flex items-center gap-2.5 rounded-xl bg-white/10 py-1.5 pl-2 pr-1 ring-1 ring-white/15">
-                  <Avatar name={currentUser.name} className="h-8 w-8 text-xs ring-2 ring-white/40" />
+                  <Avatar name={currentUser.name} src={currentUser.photo} className="h-8 w-8 text-xs ring-2 ring-white/40" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold leading-tight">{currentUser.name}</p>
                     <p className="text-xs leading-tight text-brand-100">{ROLE_LABELS[currentUser.role]}</p>
@@ -2992,15 +3022,15 @@
           {r.show_discount && manualDiscount > 0 && <div className="flex justify-between"><span>Diskon</span><span>-{formatIDR(manualDiscount)}</span></div>}
           {r.show_discount && sale.coupon_discount > 0 && <div className="flex justify-between"><span>Voucher {sale.coupon_code}</span><span>-{formatIDR(sale.coupon_discount)}</span></div>}
           {r.show_tax && sale.tax > 0 && <div className="flex justify-between"><span>Pajak</span><span>{formatIDR(sale.tax)}</span></div>}
-          {sale.deposit_used > 0 && <div className="flex justify-between"><span>Potong Ninggal Uang</span><span>-{formatIDR(sale.deposit_used)}</span></div>}
-          {sale.deposit_in > 0 && <div className="flex justify-between"><span>+ Ninggal Uang</span><span>{formatIDR(sale.deposit_in)}</span></div>}
+          {sale.deposit_used > 0 && <div className="flex justify-between"><span>Potong Deposit</span><span>-{formatIDR(sale.deposit_used)}</span></div>}
+          {sale.deposit_in > 0 && <div className="flex justify-between"><span>+ Deposit</span><span>{formatIDR(sale.deposit_in)}</span></div>}
           <div className="mt-1 flex justify-between text-sm font-bold"><span>TOTAL</span><span>{formatIDR(sale.total)}</span></div>
           {sale.cash_paid != null && <>
             <div className="flex justify-between"><span>{PAYMENT_LABELS[sale.payment_method]}</span><span>{formatIDR(sale.cash_paid)}</span></div>
             <div className="flex justify-between"><span>Kembali</span><span>{formatIDR(sale.cash_paid - sale.total)}</span></div>
           </>}
           <p className="mt-1">Bayar: <span className={sale.kasbon_status === 'paid' ? 'font-bold' : undefined}>{paymentLabel(sale)}</span></p>
-          {sale.deposit_balance != null && <p>Saldo Ninggal Uang: {formatIDR(sale.deposit_balance)}</p>}
+          {sale.deposit_balance != null && <p>Saldo Deposit: {formatIDR(sale.deposit_balance)}</p>}
           {r.show_queue && sale.queue_no && <>
             <div className="my-2 border-t border-dashed border-slate-300" />
             <p className="text-center">No. Antrian</p>
@@ -3067,12 +3097,12 @@
       if (r.show_discount && manualDiscount > 0) row('Diskon', '-' + money(manualDiscount));
       if (r.show_discount && sale.coupon_discount > 0) row(`Voucher ${sale.coupon_code}`, '-' + money(sale.coupon_discount));
       if (r.show_tax && sale.tax > 0) row('Pajak', money(sale.tax));
-      if (sale.deposit_used > 0) row('Potong Ninggal Uang', '-' + money(sale.deposit_used));
-      if (sale.deposit_in > 0) row('+ Ninggal Uang', money(sale.deposit_in));
+      if (sale.deposit_used > 0) row('Potong Deposit', '-' + money(sale.deposit_used));
+      if (sale.deposit_in > 0) row('+ Deposit', money(sale.deposit_in));
       row('TOTAL', money(sale.total), { bold: true });
       if (sale.cash_paid != null) { row(PAYMENT_LABELS[sale.payment_method], money(sale.cash_paid)); row('Kembali', money(sale.cash_paid - sale.total)); }
       add(`Bayar: ${paymentLabel(sale)}`);
-      if (sale.deposit_balance != null) add(wrapText(`Saldo Ninggal Uang: ${money(sale.deposit_balance)}`, cols));
+      if (sale.deposit_balance != null) add(wrapText(`Saldo Deposit: ${money(sale.deposit_balance)}`, cols));
       if (r.show_queue && sale.queue_no) { rule(); center('No. Antrian'); center(String(sale.queue_no), { bold: true, big: true }); }
       if (r.footer) { add(''); center(r.footer); }
       if (r.show_brand) { add(''); center(`Dibuat dengan ${APP_NAME}`); }
@@ -3521,6 +3551,8 @@
     const LOG_TONES = { penjualan: 'bg-emerald-50 text-emerald-700', kas: 'bg-amber-50 text-amber-700', produk: 'bg-brand-50 text-brand-700', absensi: 'bg-violet-50 text-violet-700', keuangan: 'bg-rose-50 text-rose-700', akun: 'bg-slate-100 text-slate-600' };
     const LOG_ICONS = { penjualan: 'receipt', kas: 'cash', produk: 'products', pelanggan: 'customers', absensi: 'clock', karyawan: 'users', keuangan: 'finance', pembelian: 'purchases', promo: 'incentives', pengaturan: 'settings', akun: 'login' };
 
+    // Entries written before "Deposit" replaced the old term
+    const newTerms = (text) => text.replace(/ninggal uang/gi, 'Deposit');
     function ActivityLogModule({ db, session }) {
       const cloud = !!session;
       const [logs, setLogs] = useState([]);
@@ -3592,8 +3624,8 @@
                   <li key={l.id} className="flex gap-3 px-4 py-3">
                     <span className={cx('mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg', LOG_TONES[l.kind] || 'bg-slate-100 text-slate-600')}><SvgIcon name={LOG_ICONS[l.kind] || 'info'} className="h-4 w-4" /></span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-900">{l.action}</p>
-                      {l.detail && <p className="mt-0.5 break-words text-sm text-slate-600">{l.detail}</p>}
+                      <p className="text-sm font-medium text-slate-900">{newTerms(l.action)}</p>
+                      {l.detail && <p className="mt-0.5 break-words text-sm text-slate-600">{newTerms(l.detail)}</p>}
                       <p className="mt-0.5 text-xs text-slate-500">{l.user_name} · {ROLE_LABELS[l.role] || l.role}{pendingIds.has(l.id) && cloud ? ' · belum terkirim' : ''}</p>
                     </div>
                     <time className="flex-shrink-0 text-xs font-medium text-slate-500 tabular" dateTime={l.at}>{fmtTime(l.at)}</time>
@@ -3699,7 +3731,7 @@
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Tren 7 hari terakhir</h3>
-                  <p className="text-sm text-slate-600">Penjualan bersih (tanpa pajak) dan laba kotor per hari.</p>
+                  <p className="text-sm text-slate-600">Total pemasukan (tanpa pajak) dan laba kotor per hari.</p>
                 </div>
                 <Badge tone="teal">{targetPct}% target bulan ini</Badge>
               </div>
@@ -3748,7 +3780,7 @@
                   return (
                     <li key={u.id} className="flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-2">
-                        <Avatar name={u.name} className="h-8 w-8 text-xs" />
+                        <Avatar name={u.name} src={u.photo} className="h-8 w-8 text-xs" />
                         <span className="truncate text-sm font-medium text-slate-800">{u.name}</span>
                       </span>
                       {!rec ? <Badge tone="slate">Belum absen</Badge>
@@ -3979,7 +4011,7 @@
       const quickCash = [...new Set([amountDue, Math.ceil(amountDue / 50000) * 50000, Math.ceil(amountDue / 100000) * 100000])].filter(v => v > 0);
       const toggleDeposit = () => {
         if (isWalkIn) return notify('Harap pilih nama pelanggan.', 'warn');
-        if (!depositBalance) return notify(`${selectedCustomer.name} belum punya saldo Ninggal Uang.`, 'warn');
+        if (!depositBalance) return notify(`${selectedCustomer.name} belum punya saldo Deposit.`, 'warn');
         setUseDeposit(true);
       };
 
@@ -4289,7 +4321,7 @@
                         <button type="button" onClick={() => setShowVoucher(true)} className={cx(boxBtn, focusRing)}><SvgIcon name="receipt" className="h-4 w-4" />Kode voucher</button>
                       )}
                       {!useDeposit && (
-                        <button type="button" onClick={toggleDeposit} className={cx(boxBtn, focusRing)}><SvgIcon name="cash" className="h-4 w-4" />Ninggal Uang{depositBalance > 0 && <span className="tabular">{formatIDR(depositBalance)}</span>}</button>
+                        <button type="button" onClick={toggleDeposit} className={cx(boxBtn, focusRing)}><SvgIcon name="cash" className="h-4 w-4" />Deposit{depositBalance > 0 && <span className="tabular">{formatIDR(depositBalance)}</span>}</button>
                       )}
                     </div>
                   )}
@@ -4337,8 +4369,8 @@
                 {taxRate > 0 && <div className="flex justify-between text-slate-600"><dt>Pajak ({taxRate}%)</dt><dd className="font-medium text-slate-900 tabular">{formatIDR(taxAmount)}</dd></div>}
                 {useDeposit && (
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 px-2 py-1 text-emerald-800">
-                    <dt className="flex items-center gap-1.5"><SvgIcon name="cash" className="h-4 w-4" />Ninggal Uang
-                      <button type="button" onClick={() => setUseDeposit(false)} aria-label="Batal potong Ninggal Uang" className={cx('rounded p-0.5 hover:bg-emerald-100', focusRing)}><SvgIcon name="x" className="h-3.5 w-3.5" /></button>
+                    <dt className="flex items-center gap-1.5"><SvgIcon name="cash" className="h-4 w-4" />Deposit
+                      <button type="button" onClick={() => setUseDeposit(false)} aria-label="Batal potong Deposit" className={cx('rounded p-0.5 hover:bg-emerald-100', focusRing)}><SvgIcon name="x" className="h-3.5 w-3.5" /></button>
                     </dt>
                     <dd className="font-semibold tabular">− {formatIDR(depositUsed)}</dd>
                   </div>
@@ -4460,7 +4492,7 @@
                 <label className={cx('flex min-h-[44px] items-center gap-3 rounded-xl border border-slate-200 px-3 text-sm', changeDue > 0 ? 'cursor-pointer text-slate-900' : 'cursor-not-allowed text-slate-400')}>
                   <input type="checkbox" className="h-5 w-5 rounded accent-brand-700" disabled={!changeDue} checked={leaveChange && !isWalkIn}
                     onChange={e => { if (isWalkIn) setLeaveNotice(true); else setLeaveChange(e.target.checked); }} />
-                  <span className="min-w-0 flex-1 font-semibold">Ninggal Uang</span>
+                  <span className="min-w-0 flex-1 font-semibold">Deposit</span>
                   {depositIn > 0 && <span className="font-semibold text-emerald-700 tabular">+ {formatIDR(depositIn)}</span>}
                 </label>
                 {leaveNotice && isWalkIn && <p className="text-sm font-medium text-amber-700" role="alert">Harap pilih nama pelanggan.</p>}
@@ -4610,6 +4642,16 @@
 
       const [from, to] = rangeBounds(range, customFrom, customTo);
       const singleDay = from === to;
+      // A clicked bar narrows the product and transaction lists on screen. Exports always cover the whole period.
+      const [pick, setPick] = useState(null);
+      useEffect(() => setPick(null), [from, to, cashierFilter, methodFilter]);
+      const inPick = (s) => !pick || (singleDay ? new Date(s.date).getHours() === pick.key : saleDay(s) === pick.key);
+      const pickBar = (chart) => {
+        const bar = chart?.activePayload?.[0]?.payload;
+        if (!bar?.total) return;
+        setLimit(30);
+        setPick(p => p?.key === bar.key ? null : { key: bar.key, label: singleDay ? `pukul ${bar.label}.00` : fmtDateShort(bar.key) });
+      };
 
       // Everyone sees the whole store's sales and can narrow them to one cashier
       const scoped = allSalesOf(db).filter(s => {
@@ -4647,26 +4689,30 @@
         if (singleDay) {
           return Array.from({ length: 18 }, (_, i) => {
             const h = 6 + i;
-            return { label: `${pad(h)}`, total: valid.filter(s => new Date(s.date).getHours() === h).reduce((a, s) => a + s.total, 0) };
+            return { key: h, label: `${pad(h)}`, total: valid.filter(s => new Date(s.date).getHours() === h).reduce((a, s) => a + s.total, 0) };
           });
         }
         const out = [];
         for (let k = from; k <= to && out.length < 93; k = addDays(k, 1)) {
-          out.push({ label: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), total: valid.filter(s => saleDay(s) === k).reduce((a, s) => a + s.total, 0) });
+          out.push({ key: k, label: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), total: valid.filter(s => saleDay(s) === k).reduce((a, s) => a + s.total, 0) });
         }
         return out;
       }, [scoped.length, from, to, gross]);
 
-      const productRows = useMemo(() => {
+      const tallyProducts = (list) => {
         const map = {};
-        valid.forEach(s => s.items.forEach(it => {
+        list.forEach(s => s.items.forEach(it => {
           map[it.id] = map[it.id] || { id: it.id, name: it.name, qty: 0, omzet: 0 };
           map[it.id].qty += it.qty; map[it.id].omzet += it.qty * it.sell_price;
         }));
         return Object.values(map);
-      }, [scoped.length, gross]);
+      };
+      const productRows = useMemo(() => tallyProducts(valid), [scoped.length, gross]);
       const productTotal = productRows.reduce((a, p) => a + p.omzet, 0) || 1;
-      const sortedProducts = sortBy(productRows, productSort, { qty: p => p.qty, omzet: p => p.omzet, share: p => p.omzet, name: p => p.name.toLowerCase() });
+      const productSorters = { qty: p => p.qty, omzet: p => p.omzet, share: p => p.omzet, name: p => p.name.toLowerCase() };
+      const sortedProducts = sortBy(productRows, productSort, productSorters);
+      const shownProducts = pick ? sortBy(tallyProducts(valid.filter(inPick)), productSort, productSorters) : sortedProducts;
+      const shownProductTotal = pick ? shownProducts.reduce((a, p) => a + p.omzet, 0) || 1 : productTotal;
 
       const byMethod = Object.keys(PAYMENT_LABELS).map(m => {
         // Saldo was already income when it was left; this line shows how much of it got spent
@@ -4679,7 +4725,7 @@
       // Money received, by method. Kasbon is a sale not paid yet and saldo was received earlier, so neither counts here
       const moneyMethods = byMethod.filter(x => x.m !== 'deposit' && x.m !== 'bayar_nanti');
       const otherMethods = byMethod.filter(x => x.m === 'deposit' || x.m === 'bayar_nanti');
-      const otherLabel = (x) => x.m === 'deposit' ? 'Ninggal Uang (potong saldo)' : 'Kasbon baru';
+      const otherLabel = (x) => x.m === 'deposit' ? 'Deposit (potong saldo)' : 'Kasbon baru';
       const methodSum = byMethod.reduce((a, x) => a + x.total, 0) || 1;
 
       const byCashier = db.users.map(u => {
@@ -4697,6 +4743,7 @@
           || (PAYMENT_LABELS[s.payment_method] || '').toLowerCase().includes(qs) || payState(s).toLowerCase().includes(qs)),
         txSort, { date: s => new Date(s.date).getTime(), total: s => s.total });
       // One sale can have two rows (the kasbon, then its repayment), so the list is never added up as one column
+      const shownTx = pick ? txList.filter(inPick) : txList;
       const txSales = txList.filter(s => !s.repay && s.status !== 'void');
       const txTotal = txSales.reduce((a, s) => a + s.total, 0);
       const txRepaid = txList.filter(s => s.repay).reduce((a, s) => a + s.total, 0);
@@ -4717,10 +4764,10 @@
           sheets: [
             { name: 'Ringkasan', tables: [
               { heading: 'Ringkasan', columns: [{ header: 'Keterangan', width: 34 }, { header: 'Nilai', width: 20, t: 'money' }], rows: [
-                ['Penjualan (termasuk pajak)', gross], ['Penjualan bersih', net], ['Diskon diberikan', discount],
+                ['Penjualan (termasuk pajak)', gross], ['Total pemasukan', net], ['Diskon diberikan', discount],
                 ['Jumlah transaksi', int(valid.length)], ['Item terjual', int(itemsSold)], ['Rata-rata per transaksi', avg],
                 ...(isOwner ? [['HPP', hpp], ['Laba kotor', net - hpp]] : []),
-                ['Pelunasan kasbon diterima', repaid], ['Ninggal uang masuk (termasuk penjualan)', depositIn], ['Saldo ninggal uang dipakai', depositUsed], ['Pengeluaran / biaya operasional', expTotal]
+                ['Pelunasan kasbon diterima', repaid], ['Deposit masuk (termasuk penjualan)', depositIn], ['Saldo deposit dipakai', depositUsed], ['Pengeluaran / biaya operasional', expTotal]
               ] },
               { heading: 'Metode pembayaran', columns: [{ header: 'Metode' }, { header: 'Total', t: 'money' }, { header: 'Jumlah', width: 12, t: 'int' }, { header: 'Termasuk pelunasan kasbon', width: 26, t: 'money' }],
                 rows: moneyMethods.map(x => [PAYMENT_LABELS[x.m], x.total, x.count, x.repay]), total: ['Total uang masuk', moneyMethods.reduce((a, x) => a + x.total, 0), moneyMethods.reduce((a, x) => a + x.count, 0), repaid] },
@@ -4730,7 +4777,7 @@
             ] },
             { name: 'Transaksi', tables: [{
               columns: [{ header: 'Waktu', width: 20 }, { header: 'No. Nota', width: 22 }, { header: 'Kasir', width: 18 }, { header: 'Pelanggan', width: 20 }, { header: 'Metode', width: 12 },
-                { header: 'Subtotal', width: 15, t: 'money' }, { header: 'Diskon', width: 13, t: 'money' }, { header: 'Voucher', width: 12 }, { header: 'Pajak', width: 13, t: 'money' }, { header: 'Potong saldo', width: 14, t: 'money' }, { header: 'Ninggal uang', width: 14, t: 'money' }, { header: 'Total', width: 15, t: 'money' }, { header: 'Status', width: 16 }, { header: 'Item', width: 50 }],
+                { header: 'Subtotal', width: 15, t: 'money' }, { header: 'Diskon', width: 13, t: 'money' }, { header: 'Voucher', width: 12 }, { header: 'Pajak', width: 13, t: 'money' }, { header: 'Potong saldo', width: 14, t: 'money' }, { header: 'Deposit', width: 14, t: 'money' }, { header: 'Total', width: 15, t: 'money' }, { header: 'Status', width: 16 }, { header: 'Item', width: 50 }],
               rows: txList.map(s => s.repay
                 ? [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, `${PAYMENT_LABELS[s.payment_method]} · Pelunasan kasbon`, '', '', '', '', '', '', { v: s.total, t: 'paren' }, payState(s), s.items.map(it => `${it.name} x${it.qty}`).join('; ')]
                 : [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], s.subtotal, s.discount || 0, s.coupon_code || '', s.tax || 0, s.deposit_used || 0, s.deposit_in || 0, s.total, s.status === 'void' ? 'Batal' : payState(s) || (s.payment_method === 'bayar_nanti' ? 'Kasbon' : 'Selesai'), s.items.map(it => `${it.name} x${it.qty}`).join('; ')]),
@@ -4747,7 +4794,7 @@
             }] },
             { name: 'Pengeluaran', tables: [{
               columns: [{ header: 'Tanggal', width: 16 }, { header: 'Kategori', width: 20 }, { header: 'Catatan', width: 36 }, { header: 'Dicatat oleh', width: 20 }, { header: 'Nominal', width: 16, t: 'money' }],
-              rows: expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '', e.by || '', Number(e.amount) || 0]),
+              rows: expenses.map(e => [fmtDateShort(e.date), expenseCat(e), e.note || '', e.by || '', Number(e.amount) || 0]),
               total: ['Total', '', '', '', expTotal]
             }] }
           ]
@@ -4775,10 +4822,10 @@
             body: [
               ['Jumlah transaksi', `${valid.length}`], ['Item terjual', `${itemsSold}`], ['Rata-rata per transaksi', rp(avg)],
               ['Diskon diberikan', `- ${rp(discount)}`],
-              ...(depositIn ? [['Ninggal uang masuk', rp(depositIn)]] : []),
-              ...(depositUsed ? [['Saldo ninggal uang dipakai', rp(depositUsed)]] : []),
+              ...(depositIn ? [['Deposit masuk', rp(depositIn)]] : []),
+              ...(depositUsed ? [['Saldo deposit dipakai', rp(depositUsed)]] : []),
               ...(repaid ? [['Pelunasan kasbon diterima', rp(repaid)]] : []),
-              [strong('Penjualan bersih'), strong(rp(net))],
+              [strong('Total pemasukan'), strong(rp(net))],
               ...(isOwner ? [['HPP (harga beli produk terjual)', `- ${rp(hpp)}`], [strong('LABA KOTOR', true), strong(rp(net - hpp), true)]] : []),
               [strong('TOTAL PENJUALAN (termasuk pajak)', !isOwner), strong(rp(gross), !isOwner)]
             ]
@@ -4813,7 +4860,7 @@
             startY: section('Rincian Pengeluaran (Biaya Operasional)', `Semua uang keluar untuk operasional toko selama ${periodText}.`), margin, ...rightHead(3),
             head: [['Tanggal', 'Jenis pengeluaran', 'Keterangan', 'Uang keluar']],
             foot: [[{ content: 'Total pengeluaran', colSpan: 3 }, { content: rp(expenses.reduce((a, e) => a + (Number(e.amount) || 0), 0)), styles: { halign: 'right' } }]], footStyles, showFoot: 'lastPage',
-            body: expenses.length ? expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '-', rp(e.amount)]) : [[{ content: 'Tidak ada pengeluaran di periode ini', colSpan: 4 }]],
+            body: expenses.length ? expenses.map(e => [fmtDateShort(e.date), expenseCat(e), e.note || '-', rp(e.amount)]) : [[{ content: 'Tidak ada pengeluaran di periode ini', colSpan: 4 }]],
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 3: { halign: 'right' } }
           });
           doc.autoTable({
@@ -4829,13 +4876,7 @@
               s.repay ? `(${rp(s.total)})` : rp(s.total)]) : [[{ content: 'Tidak ada transaksi', colSpan: 5 }]],
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 9 }, columnStyles: { 4: { halign: 'right' } }
           });
-          const pages = doc.getNumberOfPages();
-          doc.setFontSize(8); doc.setTextColor(140);
-          for (let i = 1; i <= pages; i++) {
-            doc.setPage(i);
-            doc.text(`Dibuat dengan ${APP_NAME} · ${fmtDateTime(new Date().toISOString())} · ${currentUser.name}`, 40, 820);
-            doc.text(`Halaman ${i} dari ${pages}`, 555, 820, { align: 'right' });
-          }
+          pdfFooter(doc, currentUser.name);
           doc.save(`Laporan_Penjualan_${db.business.name.replace(/\s+/g, '_')}_${from}_${to}.pdf`);
           notify('PDF laporan penjualan diunduh.');
         } catch {
@@ -4952,7 +4993,7 @@
           </Card>
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Penjualan (termasuk pajak)" value={formatIDR(gross)} sub={`Bersih ${formatIDR(net)}${depositIn ? ` · Termasuk ninggal uang ${formatIDR(depositIn)}` : ''}`} icon="dollar" />
+            <StatCard label="Penjualan (termasuk pajak)" value={formatIDR(gross)} sub={`Total pemasukan ${formatIDR(net)}${depositIn ? ` · Termasuk deposit ${formatIDR(depositIn)}` : ''}`} icon="dollar" />
             <StatCard label="Transaksi" value={valid.length} sub={voided.length ? `${voided.length} dibatalkan` : `Rata-rata ${formatIDR(avg)}`} icon="receipt" tone="blue" />
             <StatCard label="Item terjual" value={itemsSold} sub={`${productRows.length} jenis produk`} icon="products" tone="purple" />
             {isOwner
@@ -4962,16 +5003,24 @@
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
             <Card className="p-5 lg:col-span-8">
-              <h3 className="text-base font-bold text-slate-900">{singleDay ? 'Penjualan per jam' : 'Penjualan per hari'}</h3>
-              <div className="mt-4 h-60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base font-bold text-slate-900">{singleDay ? 'Penjualan per jam' : 'Penjualan per hari'}</h3>
+                {pick
+                  ? <Btn variant="ghost" size="sm" icon="x" onClick={() => setPick(null)}>Tampilkan semua</Btn>
+                  : valid.length > 0 && <span className="text-xs text-slate-500">Klik batang untuk melihat rinciannya</span>}
+              </div>
+              {pick && <p className="mt-1 text-sm text-slate-600" role="status">Produk dan transaksi di bawah hanya untuk <span className="font-semibold text-slate-900">{pick.label}</span>.</p>}
+              <div className="mt-4 h-60 cursor-pointer">
                 {valid.length === 0 ? <EmptyState icon="report" title="Belum ada penjualan di periode ini" /> : ResponsiveContainer && (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                    <BarChart data={chartData} onClick={pickBar} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                       <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#475569' }} interval="preserveStartEnd" />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#475569' }} tickFormatter={v => v >= 1e6 ? `${(v / 1e6).toFixed(1)}jt` : `${Math.round(v / 1000)}rb`} width={48} />
                       <Tooltip formatter={(v) => [formatIDR(v), 'Penjualan']} labelFormatter={(l) => singleDay ? `Pukul ${l}.00` : l} cursor={{ fill: '#f1f5f9' }} contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0', fontSize: 13 }} />
-                      <Bar dataKey="total" fill="#1a4fe6" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="total" fill="#1a4fe6" radius={[6, 6, 0, 0]}>
+                        {chartData.map(d => <Cell key={d.key} fill={pick?.key === d.key ? '#f8cb2e' : '#1a4fe6'} />)}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -4997,7 +5046,7 @@
                 <ul className="mt-3 space-y-2">
                   {byCashier.map(x => (
                     <li key={x.u.id} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="flex min-w-0 items-center gap-2"><Avatar name={x.u.name} className="h-7 w-7 text-xs" /><span className="truncate">{x.u.name}</span></span>
+                      <span className="flex min-w-0 items-center gap-2"><Avatar name={x.u.name} src={x.u.photo} className="h-7 w-7 text-xs" /><span className="truncate">{x.u.name}</span></span>
                       <span className="text-right"><span className="block font-semibold tabular">{formatIDR(x.total)}</span><span className="text-xs text-slate-500">{x.count} nota</span></span>
                     </li>
                   ))}
@@ -5008,7 +5057,7 @@
 
           <Card>
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 p-4">
-              <h3 className="text-base font-bold text-slate-900">Penjualan per produk</h3>
+              <h3 className="text-base font-bold text-slate-900">Penjualan per produk{pick && <span className="font-normal text-slate-500"> · {pick.label}</span>}</h3>
               <span className="text-xs text-slate-500">Klik judul kolom untuk mengurutkan</span>
             </div>
             <div className="overflow-x-auto">
@@ -5022,9 +5071,9 @@
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sortedProducts.slice(0, 50).map(p => {
+                  {shownProducts.slice(0, 50).map(p => {
                     const prod = db.products.find(x => x.id === productIdOf(p)) || { name: p.name };
-                    const share = Math.round(p.omzet / productTotal * 100);
+                    const share = Math.round(p.omzet / shownProductTotal * 100);
                     return (
                       <tr key={p.id} className="hover:bg-slate-50">
                         <td className="px-4 py-2.5"><div className="flex items-center gap-3"><ProductThumb product={prod} className="h-9 w-9 rounded-lg" textClass="text-xs" /><span className="font-medium text-slate-900">{p.name}</span></div></td>
@@ -5041,13 +5090,13 @@
                   })}
                 </tbody>
               </table>
-              {productRows.length === 0 && <EmptyState icon="products" title="Belum ada produk terjual" />}
+              {shownProducts.length === 0 && <EmptyState icon="products" title="Belum ada produk terjual" />}
             </div>
           </Card>
 
           <Card>
             <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({txList.length})</span></h3>
+              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({shownTx.length}{pick ? ` · ${pick.label}` : ''})</span></h3>
               <div className="flex flex-wrap items-center gap-3">
                 <SearchInput id="tx-search" value={search} onChange={setSearch} placeholder="Cari nota, pelanggan, produk, metode, lunas…" className="w-full sm:w-80" />
                 <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={showVoid} onChange={e => setShowVoid(e.target.checked)} className="h-4 w-4 rounded accent-brand-700" />Tampilkan yang dibatalkan</label>
@@ -5067,7 +5116,7 @@
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {txList.slice(0, limit).map(s => (
+                  {shownTx.slice(0, limit).map(s => (
                     <tr key={s.id} className={cx('hover:bg-slate-50', s.status === 'void' && 'text-slate-400')}>
                       <td className="whitespace-nowrap px-4 py-2.5 tabular">{singleDay ? fmtTime(s.date) : fmtDateTime(s.date)}</td>
                       <td className="px-4 py-2.5">
@@ -5096,8 +5145,8 @@
                   ))}
                 </tbody>
               </table>
-              {txList.length === 0 && <EmptyState icon="receipt" title="Tidak ada transaksi" desc="Coba ubah periode atau filter." />}
-              {txList.length > limit && <div className="p-4 text-center"><Btn variant="secondary" onClick={() => setLimit(l => l + 30)}>Tampilkan lebih banyak</Btn></div>}
+              {shownTx.length === 0 && <EmptyState icon="receipt" title="Tidak ada transaksi" desc="Coba ubah periode atau filter." />}
+              {shownTx.length > limit &&<div className="p-4 text-center"><Btn variant="secondary" onClick={() => setLimit(l => l + 30)}>Tampilkan lebih banyak</Btn></div>}
             </div>
           </Card>
 
@@ -5141,8 +5190,8 @@
                 <div className="flex justify-between text-slate-600"><dt>Subtotal</dt><dd className="tabular">{formatIDR(detail.subtotal)}</dd></div>
                 {detail.discount > 0 && <div className="flex justify-between text-emerald-700"><dt>Diskon{detail.coupon_code ? ` & voucher ${detail.coupon_code}` : ''}</dt><dd className="tabular">− {formatIDR(detail.discount)}</dd></div>}
                 {detail.tax > 0 && <div className="flex justify-between text-slate-600"><dt>Pajak</dt><dd className="tabular">{formatIDR(detail.tax)}</dd></div>}
-                {detail.deposit_used > 0 && <div className="flex justify-between text-emerald-700"><dt>Potong Ninggal Uang</dt><dd className="tabular">− {formatIDR(detail.deposit_used)}</dd></div>}
-                {detail.deposit_in > 0 && <div className="flex justify-between text-slate-600"><dt>+ Ninggal Uang</dt><dd className="tabular">{formatIDR(detail.deposit_in)}</dd></div>}
+                {detail.deposit_used > 0 && <div className="flex justify-between text-emerald-700"><dt>Potong Deposit</dt><dd className="tabular">− {formatIDR(detail.deposit_used)}</dd></div>}
+                {detail.deposit_in > 0 && <div className="flex justify-between text-slate-600"><dt>+ Deposit</dt><dd className="tabular">{formatIDR(detail.deposit_in)}</dd></div>}
                 <div className="flex justify-between font-bold text-slate-900"><dt>Total</dt><dd className="tabular">{formatIDR(detail.total)}</dd></div>
               </dl>
               {payRows.some(r => r.sale?.id === detail.id) && (
@@ -5562,7 +5611,7 @@
       const [submitted, setSubmitted] = useState(false);
       const [search, setSearch] = useState('');
       const [confirmDel, setConfirmDel] = useState(false);
-      // Ninggal Uang: { kind: 'refund' | 'transfer', all, amount, to, q } while one of the two forms is open
+      // Deposit: { kind: 'refund' | 'transfer', all, amount, to, q } while one of the two forms is open
       const [dep, setDep] = useState(null);
       useEffect(() => { setConfirmDel(false); setDep(null); }, [form && form.id]);
       const saldo = form?.id ? db.customers.find(c => c.id === form.id)?.deposit || 0 : 0;
@@ -5571,7 +5620,7 @@
       const depTargets = dep?.kind === 'transfer' ? db.customers.filter(c => c.id !== form.id && c.id !== 'cust-1' && (!dep.q.trim() || c.name.toLowerCase().includes(dep.q.trim().toLowerCase()) || c.phone.includes(dep.q.trim()))) : [];
       const depHistory = form?.id ? [
         ...allSalesOf(db).filter(s => s.customer_id === form.id && s.status !== 'void' && (s.deposit_in || s.deposit_used)).flatMap(s => [
-          ...(s.deposit_in ? [{ id: s.id + 'i', date: s.date, label: `Ninggal uang · ${s.receipt_no}`, amount: s.deposit_in }] : []),
+          ...(s.deposit_in ? [{ id: s.id + 'i', date: s.date, label: `Deposit · ${s.receipt_no}`, amount: s.deposit_in }] : []),
           ...(s.deposit_used ? [{ id: s.id + 'u', date: s.date, label: `Dipakai belanja · ${s.receipt_no}`, amount: -s.deposit_used }] : [])
         ]),
         ...(db.deposit_moves || []).filter(m => m.customer_id === form.id || m.to_id === form.id).map(m => ({
@@ -5592,7 +5641,7 @@
             ...prev,
             customers: prev.customers.map(c => c.id === id ? { ...c, deposit: Math.max(0, (c.deposit || 0) - amount) } : c),
             deposit_moves: [{ ...base, kind: 'refund' }, ...(prev.deposit_moves || [])],
-            expenses: [{ id: generateId('EXP'), date: dateKey(), category: 'Uang Pelanggan', amount, note: name, by: currentUser.name, by_id: currentUser.id, ...(session ? { session_id: session.id } : {}) }, ...prev.expenses]
+            expenses: [{ id: generateId('EXP'), date: dateKey(), category: DEPOSIT_REFUND, amount, note: name, by: currentUser.name, by_id: currentUser.id, ...(session ? { session_id: session.id } : {}) }, ...prev.expenses]
           }));
           notify(`${formatIDR(amount)} dikembalikan ke ${name} dan dicatat sebagai pengeluaran.`);
         } else {
@@ -5637,7 +5686,7 @@
 
       return (
         <div className="space-y-5">
-          <PageHeader title="Pelanggan" desc="Pelanggan tetap, riwayat belanja, kasbon, dan ninggal uang."
+          <PageHeader title="Pelanggan" desc="Pelanggan tetap, riwayat belanja, kasbon, dan deposit."
             actions={<Btn icon="plus" onClick={() => { setForm({ name: '', phone: '' }); setSubmitted(false); }}>Tambah pelanggan</Btn>} />
           <SearchInput id="cust-search" value={search} onChange={setSearch} placeholder="Cari nama atau nomor HP…" className="max-w-sm" />
 
@@ -5657,7 +5706,7 @@
                       <div><dt className="text-xs text-slate-500">Kunjungan</dt><dd className="font-semibold text-slate-900 tabular">{c.visits}×</dd></div>
                       <div><dt className="text-xs text-slate-500">Total belanja</dt><dd className="font-semibold text-slate-900 tabular">{formatIDR(c.total_spent)}</dd></div>
                       <div><dt className="text-xs text-slate-500">Kasbon</dt><dd className={cx('font-semibold tabular', c.debt > 0 ? 'text-rose-600' : 'text-slate-400')}>{c.debt > 0 ? formatIDR(c.debt) : '—'}</dd></div>
-                      <div><dt className="text-xs text-slate-500">Ninggal uang</dt><dd className={cx('font-semibold tabular', c.deposit > 0 ? 'text-emerald-700' : 'text-slate-400')}>{c.deposit > 0 ? formatIDR(c.deposit) : '—'}</dd></div>
+                      <div><dt className="text-xs text-slate-500">Deposit</dt><dd className={cx('font-semibold tabular', c.deposit > 0 ? 'text-emerald-700' : 'text-slate-400')}>{c.deposit > 0 ? formatIDR(c.deposit) : '—'}</dd></div>
                     </dl>
                     {c.debt > 0 && c.phone !== '-' && (
                       <a href={waLink(c)} target="_blank" rel="noreferrer" className={cx('mt-3 inline-flex min-h-[36px] items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 text-xs font-semibold text-emerald-800 hover:bg-emerald-100', focusRing)}>
@@ -5678,7 +5727,7 @@
                 <Btn variant="danger" onClick={removeCustomer}>Ya, hapus</Btn>
               </> : <>
                 {form.id && <IconBtn icon="trash" label={`Hapus ${form.name}`} className="text-rose-600 hover:bg-rose-50"
-                  onClick={() => form.debt > 0 ? notify(`${form.name} masih punya kasbon ${formatIDR(form.debt)}. Lunasi dulu sebelum dihapus.`, 'warn') : saldo > 0 ? notify(`${form.name} masih punya saldo Ninggal Uang ${formatIDR(saldo)}. Kembalikan atau pindahkan dulu.`, 'warn') : setConfirmDel(true)} />}
+                  onClick={() => form.debt > 0 ? notify(`${form.name} masih punya kasbon ${formatIDR(form.debt)}. Lunasi dulu sebelum dihapus.`, 'warn') : saldo > 0 ? notify(`${form.name} masih punya saldo Deposit ${formatIDR(saldo)}. Kembalikan atau pindahkan dulu.`, 'warn') : setConfirmDel(true)} />}
                 <span className="flex-1" />
                 <Btn variant="secondary" onClick={() => setForm(null)}>Batal</Btn>
                 <Btn onClick={save}>Simpan</Btn>
@@ -5693,7 +5742,7 @@
                 {form.id && (
                   <section aria-labelledby="dep-title" className="border-t border-slate-200 pt-4">
                     <div className="flex items-baseline justify-between gap-2">
-                      <h4 id="dep-title" className="text-sm font-bold text-slate-900">Ninggal Uang</h4>
+                      <h4 id="dep-title" className="text-sm font-bold text-slate-900">Deposit</h4>
                       <span className={cx('text-base font-bold tabular', saldo > 0 ? 'text-emerald-700' : 'text-slate-400')}>{saldo > 0 ? formatIDR(saldo) : '—'}</span>
                     </div>
                     {!dep && (
@@ -5727,7 +5776,7 @@
                         )}
                         <SegmentedControl label="Jumlah" value={dep.all ? 'all' : 'some'} onChange={v => setDep({ ...dep, all: v === 'all' })} options={[{ value: 'all', label: 'Semua' }, { value: 'some', label: 'Isi nominal' }]} />
                         {!dep.all && <Field label="Nominal" error={depError}><MoneyInput value={dep.amount} onChange={v => setDep({ ...dep, amount: v })} /></Field>}
-                        {dep.kind === 'refund' && <p className="text-xs text-slate-600">Otomatis tercatat sebagai pengeluaran kategori Uang Pelanggan.</p>}
+                        {dep.kind === 'refund' && <p className="text-xs text-slate-600">Otomatis tercatat sebagai pengeluaran kategori Uang Deposit Pelanggan.</p>}
                         <div className="flex justify-end gap-2">
                           <Btn variant="ghost" size="sm" onClick={() => setDep(null)}>Batal</Btn>
                           <Btn size="sm" disabled={!!depError || depAmount <= 0 || (dep.kind === 'transfer' && !dep.to)} onClick={confirmDep}>{dep.kind === 'refund' ? 'Kembalikan' : 'Pindahkan'} {formatIDR(depAmount)}</Btn>
@@ -6036,7 +6085,7 @@
     // =====================================================================
     const REWARD_TYPES = ['Karyawan Teladan', 'Tepat Waktu', 'Target Penjualan', 'Lembur Ekstra', 'Lainnya'];
 
-    function AttendanceModule({ db, setDb, notify, currentUser, isOwner, todayKey, myAttendance, clockIn, clockOut, clocking, deviceId }) {
+    function AttendanceModule({ db, setDb, notify, currentUser, isOwner, hasPermission, todayKey, myAttendance, clockIn, clockOut, clocking, deviceId }) {
       const [tab, setTab] = useState(isOwner ? 'today' : 'me');
       const [month, setMonth] = useState(todayKey.slice(0, 7));
       const [rewardForm, setRewardForm] = useState(null);
@@ -6114,9 +6163,15 @@
         } catch { setDistanceCheck({ error: 'Lokasi tidak bisa dibaca. Izinkan akses lokasi di browser.' }); }
       };
 
-      const tabs = isOwner
-        ? [{ value: 'today', label: 'Hari ini' }, { value: 'schedule', label: 'Shift & aturan' }, { value: 'recap', label: 'Rekap & gaji' }, { value: 'overtime', label: `Lembur${pendingCount ? ` (${pendingCount})` : ''}` }, { value: 'rewards', label: 'Reward' }]
-        : [{ value: 'me', label: 'Absensi saya' }];
+      const tabs = [
+        ...(isOwner ? [] : [{ value: 'me', label: 'Absensi saya' }]),
+        ...ATTENDANCE_SECTIONS.filter(s => hasPermission(s.key)).map(s => ({ value: s.value, label: s.value === 'overtime' && pendingCount ? `${s.label} (${pendingCount})` : s.label }))
+      ];
+      // Switching a right off while the section is open sends the person back to their own attendance
+      useEffect(() => { if (!tabs.some(t => t.value === tab)) setTab(tabs[0].value); }, [tabs.length]);
+      // Nobody rewards themselves
+      const rewardable = staff.filter(u => isOwner || u.id !== currentUser.id);
+      const canReward = hasPermission('can_att_rewards') && rewardable.length > 0;
 
       const ruleSummary = [
         work.attendance_gps && `wajib berada ≤ ${work.attendance_radius} m dari toko`,
@@ -6234,7 +6289,7 @@
                     return (
                       <li key={u.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-3">
-                          <Avatar name={u.name} />
+                          <Avatar name={u.name} src={u.photo} />
                           <div>
                             <p className="font-semibold text-slate-900">{u.name}</p>
                             <p className="text-sm text-slate-600">{rec ? `Masuk ${fmtTime(rec.clock_in)}${rec.clock_out ? ` · Pulang ${fmtTime(rec.clock_out)} (${fmtDuration(info.worked)})` : ''}` : isDayOff ? 'Jadwal libur' : 'Belum absen'}</p>
@@ -6290,7 +6345,7 @@
             <ul className="divide-y divide-slate-100">
               {staff.map(u => (
                 <li key={u.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <span className="flex items-center gap-3"><Avatar name={u.name} /><span className="font-semibold text-slate-900">{u.name}</span></span>
+                  <span className="flex items-center gap-3"><Avatar name={u.name} src={u.photo} /><span className="font-semibold text-slate-900">{u.name}</span></span>
                   <div className="grid grid-cols-2 gap-2 sm:w-[26rem]">
                     <label><span className="sr-only">Shift {u.name}</span>
                       <select value={shiftOf(u, work).id} onChange={e => updateUser(u.id, { shift_id: e.target.value })} className={inputCls}>
@@ -6317,7 +6372,7 @@
             </div>
           </Card>
 
-          <Card className="p-5">
+          {isOwner && <Card className="p-5">
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700"><SvgIcon name="permissions" className="h-5 w-5" /></span>
               <div><h3 className="text-base font-bold text-slate-900">Cegah absen dari luar toko</h3><p className="text-sm text-slate-600">Aktifkan salah satu atau keduanya. Pemeriksaan berlaku saat absen masuk dan pulang.</p></div>
@@ -6369,20 +6424,20 @@
                 <li>• Setiap absen mencatat cara verifikasinya (kolom keterangan di rekap), sehingga Bos bisa mengecek.</li>
               </ul>
             </div>
-          </Card>
+          </Card>}
         </div>
       );
 
       const RecapView = () => {
         const recaps = staff.map(u => ({ u, r: monthlyRecap(db, u, month) }));
-        const perfect = recaps.filter(x => x.r.present >= 10 && x.r.lateDays === 0);
+        const perfect = recaps.filter(x => x.r.present >= 10 && x.r.lateDays === 0 && rewardable.includes(x.u));
         return (
           <div className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <Field label="Bulan"><select value={month} onChange={e => setMonth(e.target.value)} className={inputCls}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></Field>
               <Btn variant="secondary" icon="download" onClick={exportPayroll}>Export rekap gaji</Btn>
             </div>
-            {perfect.length > 0 && (
+            {canReward && perfect.length > 0 && (
               <div className="flex flex-col gap-3 rounded-2xl border border-purple-200 bg-purple-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <p className="flex items-start gap-3 text-sm text-purple-900"><SvgIcon name="gift" className="mt-0.5 h-5 w-5 flex-shrink-0" /><span><span className="font-semibold">{perfect.map(x => x.u.name).join(', ')}</span> tidak pernah terlambat bulan ini. Layak diberi reward Tepat Waktu.</span></p>
                 <Btn size="sm" onClick={() => setRewardForm({ user_id: perfect[0].u.id, type: 'Tepat Waktu', amount: 100000, note: `Tidak pernah terlambat ${monthLabel(month)}` })}>Beri reward</Btn>
@@ -6401,7 +6456,7 @@
                   <tbody className="divide-y divide-slate-100">
                     {recaps.map(({ u, r }) => (
                       <tr key={u.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3"><div className="flex items-center gap-2"><Avatar name={u.name} className="h-8 w-8 text-xs" /><div><p className="font-semibold text-slate-900">{u.name}</p><p className="text-xs text-slate-500">{shiftOf(u, work).name}</p></div></div></td>
+                        <td className="px-4 py-3"><div className="flex items-center gap-2"><Avatar name={u.name} src={u.photo} className="h-8 w-8 text-xs" /><div><p className="font-semibold text-slate-900">{u.name}</p><p className="text-xs text-slate-500">{shiftOf(u, work).name}</p></div></div></td>
                         <td className="px-4 py-3 text-right tabular">{r.present}</td>
                         <td className={cx('px-4 py-3 text-right tabular', r.lateDays && 'font-semibold text-amber-700')}>{r.lateDays}</td>
                         <td className="px-4 py-3 text-right tabular">{r.sick}</td>
@@ -6457,13 +6512,13 @@
                   return (
                     <li key={o.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-center gap-3">
-                        <Avatar name={u?.name || '?'} />
+                        <Avatar name={u?.name || '?'} src={u?.photo} />
                         <div>
                           <p className="font-semibold text-slate-900">{u?.name} · {fmtDuration(o.minutes)}</p>
                           <p className="text-sm text-slate-600">{fmtDateShort(o.date)} · {formatIDR(Math.round(o.minutes / 60 * work.overtime_rate))}{o.owner_note ? ` · ${o.owner_note}` : ''}</p>
                         </div>
                       </div>
-                      {o.status === 'pending' ? (
+                      {o.status === 'pending' && o.user_id === currentUser.id ? <Badge tone="amber">Menunggu keputusan</Badge> : o.status === 'pending' ? (
                         <div className="flex gap-2">
                           <Btn variant="secondary" size="sm" onClick={() => setRejecting({ ot: o, note: '' })}>Tolak</Btn>
                           <Btn size="sm" icon="check" onClick={() => decideOt(o, 'approved')}>Setujui</Btn>
@@ -6480,7 +6535,7 @@
 
       const RewardsView = () => (
         <div className="space-y-4">
-          <div className="flex justify-end"><Btn icon="gift" onClick={() => setRewardForm({ user_id: staff[0]?.id || '', type: 'Karyawan Teladan', amount: 100000, note: '' })}>Beri reward</Btn></div>
+          {canReward && <div className="flex justify-end"><Btn icon="gift" onClick={() => setRewardForm({ user_id: rewardable[0].id, type: 'Karyawan Teladan', amount: 100000, note: '' })}>Beri reward</Btn></div>}
           <Card>
             {db.rewards.length === 0 ? <EmptyState icon="gift" title="Belum ada reward" desc="Apresiasi karyawan yang rajin agar tim makin semangat." /> : (
               <ul className="divide-y divide-slate-100">
@@ -6517,7 +6572,7 @@
             <Modal title="Beri reward" onClose={() => setRewardForm(null)}
               footer={<><span className="flex-1" /><Btn variant="secondary" onClick={() => setRewardForm(null)}>Batal</Btn><Btn icon="gift" onClick={giveReward} disabled={!rewardForm.user_id || !rewardForm.amount}>Simpan</Btn></>}>
               <div className="space-y-4">
-                <Field label="Karyawan"><select value={rewardForm.user_id} onChange={e => setRewardForm({ ...rewardForm, user_id: e.target.value })} className={inputCls}>{staff.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
+                <Field label="Karyawan"><select value={rewardForm.user_id} onChange={e => setRewardForm({ ...rewardForm, user_id: e.target.value })} className={inputCls}>{rewardable.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
                 <Field label="Jenis reward"><select value={rewardForm.type} onChange={e => setRewardForm({ ...rewardForm, type: e.target.value })} className={inputCls}>{REWARD_TYPES.map(t => <option key={t}>{t}</option>)}</select></Field>
                 <Field label="Nominal" hint="Masuk ke rekap gaji bulan ini."><MoneyInput value={rewardForm.amount} onChange={v => setRewardForm({ ...rewardForm, amount: v })} /></Field>
                 <Field label="Catatan"><input value={rewardForm.note} onChange={e => setRewardForm({ ...rewardForm, note: e.target.value })} className={inputCls} placeholder="cth. pelayanan ramah, dapat pujian pelanggan" /></Field>
@@ -6558,8 +6613,11 @@
     // =====================================================================
     // FINANCE (P&L)
     // =====================================================================
-    // 'Uang Pelanggan' is written only by the refund in Pelanggan, not picked by hand
-    const EXPENSE_CATEGORIES = ['Bahan Baku', 'Gaji & Bonus', 'Listrik & Air', 'Sewa & Kebersihan', 'Transportasi', 'Perawatan', 'Lainnya', 'Uang Pelanggan'];
+    // 'Uang Deposit Pelanggan' is written only by the refund in Pelanggan, not picked by hand
+    const DEPOSIT_REFUND = 'Uang Deposit Pelanggan';
+    const EXPENSE_CATEGORIES = ['Bahan Baku', 'Gaji & Bonus', 'Listrik & Air', 'Sewa & Kebersihan', 'Transportasi', 'Perawatan', 'Lainnya', DEPOSIT_REFUND];
+    // Refunds saved before the rename keep their old category name
+    const expenseCat = (e) => e.category === 'Uang Pelanggan' ? DEPOSIT_REFUND : e.category;
 
     function ExpenseModal({ form, setForm, onSave, onClose, expenses = [] }) {
       // The day's expenses so staff can see what was already bought
@@ -6571,7 +6629,7 @@
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Tanggal"><input type="date" value={form.date} max={dateKey()} onChange={e => setForm({ ...form, date: e.target.value })} className={inputCls} /></Field>
-              <Field label="Kategori"><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={inputCls}>{EXPENSE_CATEGORIES.filter(c => c !== 'Uang Pelanggan').map(c => <option key={c}>{c}</option>)}</select></Field>
+              <Field label="Kategori"><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={inputCls}>{EXPENSE_CATEGORIES.filter(c => c !== DEPOSIT_REFUND).map(c => <option key={c}>{c}</option>)}</select></Field>
             </div>
             <Field label="Nominal"><MoneyInput autoFocus value={form.amount} onChange={v => setForm({ ...form, amount: v })} /></Field>
             <Field label="Catatan"><input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} className={inputCls} placeholder="cth. beli gula 5 kg" /></Field>
@@ -6589,7 +6647,7 @@
                     <tbody className="divide-y divide-slate-100">
                       {dayList.map(e => (
                         <tr key={e.id}>
-                          <td className="px-3 py-2 text-slate-800">{e.category}</td>
+                          <td className="px-3 py-2 text-slate-800">{expenseCat(e)}</td>
                           <td className="px-3 py-2 text-slate-600">{e.note || '—'}</td>
                           <td className="px-3 py-2 text-slate-600">{e.by || '—'}</td>
                           <td className="px-3 py-2 text-right font-medium text-slate-900 tabular">{formatIDR(e.amount)}</td>
@@ -6618,21 +6676,49 @@
       const months = monthOptions(allSalesOf(db).reduce((m, s) => saleDay(s) < m ? saleDay(s) : m, dateKey()));
       const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date));
       const payroll = db.users.filter(u => isStaffRole(u.role)).reduce((a, u) => a + monthlyRecap(db, u, month).total, 0);
+      const amountOf = (list) => list.reduce((a, e) => a + (Number(e.amount) || 0), 0);
+      const salaryGap = payroll - amountOf(expenses.filter(e => e.category === 'Gaji & Bonus'));
+      const costRows = [...new Set(expenses.map(expenseCat))]
+        .map(c => [c === DEPOSIT_REFUND ? `${c} dikembalikan` : c, amountOf(expenses.filter(e => expenseCat(e) === c))])
+        .sort((a, b) => b[1] - a[1]);
+
+      // Money received in the month by method: sales paid on the spot plus kasbon paid back
+      const monthSales = allSalesOf(db).filter(s => isValidSale(s) && saleDay(s) >= from && saleDay(s) <= to);
+      const repayments = (db.debt_payments || []).filter(p => { const k = dateKey(new Date(p.date)); return p.kind === 'customer' && k >= from && k <= to; });
+      const received = ['qris', 'cash', 'transfer'].map(m => [PAYMENT_LABELS[m],
+        monthSales.filter(s => s.payment_method === m).reduce((a, s) => a + s.total, 0) + amountOf(repayments.filter(p => (p.method || 'cash') === m))]);
+      const kasbonOpen = db.customers.reduce((a, c) => a + (c.debt || 0), 0);
+      const depositOwners = db.customers.filter(c => c.deposit > 0);
+      const supplierOwed = db.purchases.reduce((a, p) => a + poOutstanding(p), 0);
+
+      // One definition of the report, so the screen, PDF and Excel always show the same lines
+      const sections = [
+        { title: '1. Penjualan bersih', rows: [['Harga produk terjual', f.salesNet + f.discount], ['Diskon dan voucher', f.discount, '−']], total: ['Penjualan bersih', f.salesNet], note: `Sudah tanpa pajak. Pajak ${formatIDR(f.taxCollected)} ada di bagian 7.` },
+        { title: '2. Pemasukan lain (deposit)', rows: [['Deposit masuk', f.depositIn, '+'], ['Saldo deposit dipakai belanja pelanggan, sudah terhitung di penjualan', f.depositUsed, '−']], total: ['Total pemasukan lain (deposit)', f.depositIn - f.depositUsed] },
+        { title: '3. Total pemasukan', rows: [['Penjualan bersih', f.salesNet], ['Pemasukan lain (deposit)', f.depositIn - f.depositUsed, '+']], total: ['Total pemasukan', f.revenue] },
+        { title: '4. Laba kotor', rows: [['Total pemasukan', f.revenue], ['HPP (modal produk terjual)', f.hpp, '−']], total: ['Laba kotor', f.grossProfit] },
+        { title: '5. Biaya operasional (Pengeluaran)', rows: costRows, total: ['Total biaya operasional (Pengeluaran)', f.expenses],
+          warn: salaryGap > 0 ? `Total rekap gaji harusnya ${formatIDR(payroll)}. Ada selisih ${formatIDR(salaryGap)} belum dicatat di pengeluaran.` : null },
+        { title: '6. Laba bersih', rows: [['Laba kotor', f.grossProfit], ['Biaya operasional (Pengeluaran)', f.expenses, '−']], result: [f.netProfit >= 0 ? 'Laba bersih' : 'Rugi bersih', f.netProfit] },
+        { title: '7. Pencocokan uang', hint: 'tidak mengubah laba', rows: received, total: ['Total uang masuk', received.reduce((a, r) => a + r[1], 0)], note: 'Sudah termasuk pajak dan pelunasan kasbon.',
+          more: [['Pajak terkumpul, wajib disetor', f.taxCollected], [`Pelunasan kasbon ${monthLabel(month).split(' ')[0]} (pelanggan bayar kasbon)`, amountOf(repayments)], ['Kasbon pelanggan belum dibayar', kasbonOpen], [`Saldo deposit tersimpan, ${depositOwners.length} pelanggan`, depositOwners.reduce((a, c) => a + c.deposit, 0)]],
+          alert: ['Hutang ke supplier', supplierOwed],
+          tail: [['Laba bersih', f.netProfit], ['Hutang ke supplier', supplierOwed, '−']], tailTotal: ['Sisa laba bersih jika hutang dilunasi', f.netProfit - supplierOwed] }
+      ];
 
       const exportCsv = async () => {
-        const byCat = EXPENSE_CATEGORIES.map(c => [c, expenses.filter(e => e.category === c).reduce((a, e) => a + (Number(e.amount) || 0), 0)]).filter(x => x[1]);
+        const signed = ([label, value, sign]) => [label, sign === '−' ? -value : value];
+        const columns = [{ header: 'Keterangan', width: 62 }, { header: 'Nominal', width: 20, t: 'money' }];
         const how = await downloadReport(`Laba_Rugi_${month}`, {
-          title: `Laporan Laba Rugi · ${db.business.name}`, subtitle: monthLabel(month),
+          title: `Laporan Laba Rugi · ${db.business.name}`, subtitle: `${monthLabel(month)} · ${f.count} transaksi`,
           sheets: [
-            { name: 'Laba Rugi', tables: [
-              { columns: [{ header: 'Keterangan', width: 34 }, { header: 'Nilai', width: 20, t: 'money' }], rows: [
-                ['Penjualan bersih', f.revenue], ['HPP', f.hpp], ['Laba kotor', f.grossProfit], ['Biaya operasional', f.expenses], ['Pajak terkumpul (disetor)', f.taxCollected]
-              ], total: ['Laba bersih', f.netProfit] },
-              { heading: 'Biaya operasional per kategori', columns: [{ header: 'Kategori' }, { header: 'Nominal', t: 'money' }], rows: byCat, total: ['Total', byCat.reduce((a, x) => a + x[1], 0)] }
-            ] },
+            { name: 'Laba Rugi', tables: sections.flatMap(s => [
+              { heading: s.title, columns, rows: [...s.rows.map(signed), ...(s.warn ? [[s.warn, '']] : [])], ...(s.total ? { total: s.total } : { total: s.result }) },
+              ...(s.more ? [{ heading: 'Posisi saat ini', columns, rows: [...s.more, s.alert, ...s.tail].map(signed), total: s.tailTotal }] : [])
+            ]) },
             { name: 'Pengeluaran', tables: [{
               columns: [{ header: 'Tanggal', width: 16 }, { header: 'Kategori', width: 20 }, { header: 'Catatan', width: 36 }, { header: 'Dicatat oleh', width: 20 }, { header: 'Nominal', width: 16, t: 'money' }],
-              rows: expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '', e.by || '', Number(e.amount) || 0]),
+              rows: expenses.map(e => [fmtDateShort(e.date), expenseCat(e), e.note || '', e.by || '', Number(e.amount) || 0]),
               total: ['Total', '', '', '', expenses.reduce((a, e) => a + (Number(e.amount) || 0), 0)]
             }] }
           ]
@@ -6646,37 +6732,40 @@
         try {
           const JsPDF = await ensureJsPdf();
           const doc = new JsPDF({ unit: 'pt', format: 'a4' });
-          const teal = PDF_BLUE;
           const rp = pdfMoney;
-          await pdfHeader(doc, 'Laporan Laba Rugi', `${db.business.name} · ${monthLabel(month)}`);
-          doc.autoTable({
-            startY: 95, theme: 'plain', margin: { left: 40, right: 40 },
-            head: [['Ringkasan Laba Rugi', 'Nominal']], headStyles: { fillColor: teal, textColor: 255, fontStyle: 'bold' },
-            styles: { fontSize: 11, cellPadding: 7 }, columnStyles: { 1: { halign: 'right' } },
-            body: [
-              [`Penjualan bersih (${f.count} transaksi)`, rp(f.revenue)],
-              ['HPP (harga beli produk terjual)', `- ${rp(f.hpp)}`],
-              [{ content: 'Laba kotor', styles: { fontStyle: 'bold' } }, { content: rp(f.grossProfit), styles: { fontStyle: 'bold' } }],
-              ['Biaya operasional', `- ${rp(f.expenses)}`],
-              [{ content: f.netProfit >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH', styles: { fontStyle: 'bold', fillColor: [238, 244, 255] } }, { content: rp(f.netProfit), styles: { fontStyle: 'bold', fillColor: [238, 244, 255] } }],
-              [{ content: `Pajak terkumpul ${rp(f.taxCollected)} tidak dihitung sebagai pendapatan karena harus disetor.`, colSpan: 2, styles: { fontSize: 9, textColor: 110 } }]
-            ]
-          });
-          const expY = doc.lastAutoTable.finalY + 34;
+          const margin = { left: 40, right: 40, top: 40, bottom: 44 };
+          await pdfHeader(doc, 'Laporan Laba Rugi', `${db.business.name} · ${monthLabel(month)} · ${f.count} transaksi`);
+          const amount = ([, value, sign]) => `${sign === '−' ? '- ' : sign === '+' ? '+ ' : ''}${value < 0 ? `- ${rp(-value)}` : rp(value)}`;
+          const line = (cells, styles) => [{ content: cells[0], styles }, { content: amount(cells), styles }];
+          const totalStyle = { fontStyle: 'bold', fillColor: [238, 244, 255] };
+          const body = sections.flatMap(s => [
+            [{ content: s.hint ? `${s.title} (${s.hint})` : s.title, colSpan: 2, styles: { fontStyle: 'bold', fillColor: PDF_BLUE, textColor: 255 } }],
+            ...s.rows.map(r => line(r, {})),
+            ...(s.total ? [line(s.total, totalStyle)] : []),
+            ...(s.result ? [line(s.result, { fontStyle: 'bold', fillColor: s.result[1] >= 0 ? [220, 252, 231] : [255, 228, 230] })] : []),
+            ...(s.note ? [[{ content: s.note, colSpan: 2, styles: { fontSize: 9, textColor: 110 } }]] : []),
+            ...(s.warn ? [[{ content: s.warn, colSpan: 2, styles: { fontSize: 9, textColor: [146, 64, 14], fillColor: [255, 251, 235] } }]] : []),
+            ...(s.more || []).map(r => line(r, {})),
+            ...(s.alert ? [line(s.alert, { fontStyle: 'bold', textColor: [190, 18, 60], fillColor: [255, 241, 242] })] : []),
+            ...(s.tail || []).map(r => line(r, {})),
+            ...(s.tailTotal ? [line(s.tailTotal, totalStyle)] : [])
+          ]);
+          doc.autoTable({ startY: 90, theme: 'plain', margin, body, rowPageBreak: 'avoid', styles: { fontSize: 10, cellPadding: 5 }, columnStyles: { 1: { halign: 'right', cellWidth: 120 } } });
+          let expY = doc.lastAutoTable.finalY + 34;
+          if (expY > 700) { doc.addPage(); expY = 50; }
           doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30);
-          doc.text('Rincian Pengeluaran (Biaya Operasional)', 40, expY);
+          doc.text('Rincian Biaya Operasional (Pengeluaran)', 40, expY);
           doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110);
           doc.text(`Semua uang keluar untuk operasional toko selama ${monthLabel(month)}.`, 40, expY + 14);
           doc.autoTable({
-            startY: expY + 24, margin: { left: 40, right: 40 },
+            startY: expY + 24, margin, showFoot: 'lastPage',
             head: [['Tanggal', 'Jenis pengeluaran', 'Keterangan', 'Uang keluar']],
-            foot: [[{ content: 'Total pengeluaran', colSpan: 3 }, rp(f.expenses)]],
+            foot: [[{ content: 'Total biaya operasional (Pengeluaran)', colSpan: 3 }, rp(f.expenses)]],
             footStyles: { fillColor: [238, 244, 255], textColor: 30, fontStyle: 'bold', halign: 'right' },
-            body: expenses.length ? expenses.map(e => [fmtDateShort(e.date), e.category, e.note || '-', rp(e.amount)]) : [[{ content: 'Tidak ada pengeluaran bulan ini', colSpan: 4 }]],
-            headStyles: { fillColor: teal }, styles: { fontSize: 10 }, columnStyles: { 3: { halign: 'right' } }
+            body: expenses.length ? expenses.map(e => [fmtDateShort(e.date), expenseCat(e), e.note || '-', rp(e.amount)]) : [[{ content: 'Tidak ada pengeluaran bulan ini', colSpan: 4 }]],
+            headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 3: { halign: 'right' } }
           });
-          doc.setFontSize(8); doc.setTextColor(140);
-          doc.text(`Dibuat dengan ${APP_NAME} · ${fmtDateTime(new Date().toISOString())}`, 40, 820);
+          pdfFooter(doc, currentUser.name);
           doc.save(`Laba_Rugi_${db.business.name.replace(/\s+/g, '_')}_${month}.pdf`);
           notify('PDF laba rugi diunduh.');
         } catch {
@@ -6692,16 +6781,16 @@
         setExpForm(null);
       };
 
-      const Line = ({ label, value, strong, tone, sign }) => (
-        <div className={cx('flex justify-between gap-4 py-2.5', strong && 'border-t border-slate-200')}>
+      const lineRow = ([label, value, sign], strong, key) => (
+        <div key={key ?? label} className={cx('flex justify-between gap-4 py-2', strong && 'border-t border-slate-300')}>
           <dt className={cx(strong ? 'font-semibold text-slate-900' : 'text-slate-600')}>{label}</dt>
-          <dd className={cx('tabular', strong ? 'font-bold' : 'font-medium', tone || 'text-slate-900')}>{sign}{formatIDR(value)}</dd>
+          <dd className={cx('whitespace-nowrap tabular text-slate-900', strong ? 'font-bold' : 'font-medium', value < 0 && 'text-rose-600')}>{sign ? `${sign} ` : ''}{formatIDR(value)}</dd>
         </div>
       );
 
       return (
         <div className="space-y-5">
-          <PageHeader title="Laporan Laba Rugi" desc="Penjualan, HPP, dan biaya operasional per bulan."
+          <PageHeader title="Laporan Laba Rugi" desc="Pemasukan, HPP, dan biaya operasional (pengeluaran) per bulan."
             actions={<>
               {isStaffRole(currentUser.role) && <Btn variant="secondary" icon="plus" onClick={() => setExpForm(newExpense())}>Catat pengeluaran</Btn>}
               <Btn variant="secondary" icon="download" onClick={exportCsv}>Excel</Btn>
@@ -6711,27 +6800,42 @@
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <Card className="print-area p-5">
               <h3 className="text-base font-bold text-slate-900">{db.business.name}</h3>
-              <p className="text-sm text-slate-500">Periode {monthLabel(month)}</p>
-              <dl className="mt-3 text-sm">
-                <Line label={`Penjualan bersih (${f.count} transaksi)`} value={f.revenue} />
-                <Line label="HPP (harga beli produk terjual)" value={f.hpp} sign="− " tone="text-slate-700" />
-                <Line label="Laba kotor" value={f.grossProfit} strong />
-                <Line label="Biaya operasional" value={f.expenses} sign="− " tone="text-rose-600" />
-                <div className={cx('mt-2 flex justify-between gap-4 rounded-xl p-3', f.netProfit >= 0 ? 'bg-emerald-50' : 'bg-rose-50')}>
-                  <dt className={cx('font-bold', f.netProfit >= 0 ? 'text-emerald-900' : 'text-rose-900')}>{f.netProfit >= 0 ? 'Laba bersih' : 'Rugi bersih'}</dt>
-                  <dd className={cx('text-lg font-bold tabular', f.netProfit >= 0 ? 'text-emerald-800' : 'text-rose-700')}>{formatIDR(f.netProfit)}</dd>
-                </div>
-              </dl>
-              <p className="mt-3 text-xs text-slate-500">Pajak terkumpul {formatIDR(f.taxCollected)} tidak dihitung sebagai pendapatan karena harus disetor.</p>
-              {payroll > 0 && <p className="mt-1 text-xs text-slate-500">Estimasi gaji karyawan bulan ini {formatIDR(payroll)} (dari rekap absensi). Catat sebagai pengeluaran "Gaji & Bonus" saat dibayarkan.</p>}
+              <p className="text-sm text-slate-500">Periode {monthLabel(month)} · {f.count} transaksi</p>
+              {sections.map(s => (
+                <section key={s.title} className="mt-5">
+                  <h4 className="flex flex-wrap items-baseline gap-x-2 border-b border-slate-300 pb-1 text-sm font-bold text-slate-900">{s.title}{s.hint && <span className="text-xs font-normal text-slate-500">{s.hint}</span>}</h4>
+                  <dl className="text-sm">
+                    {s.rows.map(r => lineRow(r))}
+                    {s.total && lineRow(s.total, true, 'total')}
+                  </dl>
+                  {s.note && <p className="text-xs text-slate-500">{s.note}</p>}
+                  {s.warn && <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{s.warn}</p>}
+                  {s.result && (
+                    <div className={cx('mt-2 flex justify-between gap-4 rounded-xl p-3', s.result[1] >= 0 ? 'bg-emerald-50' : 'bg-rose-50')}>
+                      <span className={cx('font-bold', s.result[1] >= 0 ? 'text-emerald-900' : 'text-rose-900')}>{s.result[0]}</span>
+                      <span className={cx('text-lg font-bold tabular', s.result[1] >= 0 ? 'text-emerald-800' : 'text-rose-700')}>{formatIDR(s.result[1])}</span>
+                    </div>
+                  )}
+                  {s.more && <dl className="mt-1 text-sm">{s.more.map(r => lineRow(r))}</dl>}
+                  {s.alert && (
+                    <div className="mt-2 flex justify-between gap-4 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">
+                      <span>{s.alert[0]}</span><span className="tabular">{formatIDR(s.alert[1])}</span>
+                    </div>
+                  )}
+                  {s.tail && <dl className="mt-1 text-sm">{s.tail.map((r, i) => lineRow(r, false, i))}{lineRow(s.tailTotal, true, 'tail')}</dl>}
+                </section>
+              ))}
             </Card>
-            <Card className="p-5">
-              <h3 className="text-base font-bold text-slate-900">Pengeluaran</h3>
+            <Card className="self-start p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-base font-bold text-slate-900">Pengeluaran</h3>
+                <span className="text-base font-bold text-rose-600 tabular">{formatIDR(f.expenses)}</span>
+              </div>
               {expenses.length === 0 ? <EmptyState icon="finance" title="Belum ada pengeluaran bulan ini" /> : (
                 <ul className="mt-3 divide-y divide-slate-100">
                   {expenses.map(e => (
                     <li key={e.id} className="flex items-center justify-between gap-3 py-3 text-sm">
-                      <div className="min-w-0"><p className="font-semibold text-slate-900">{e.category}</p><p className="truncate text-slate-500">{fmtDateShort(e.date)}{e.note ? ` · ${e.note}` : ''}{e.by ? ` · ${e.by}` : ''}</p></div>
+                      <div className="min-w-0"><p className="font-semibold text-slate-900">{expenseCat(e)}</p><p className="truncate text-slate-500">{fmtDateShort(e.date)}{e.note ? ` · ${e.note}` : ''}{e.by ? ` · ${e.by}` : ''}</p></div>
                       <span className="font-semibold text-rose-600 tabular">{formatIDR(e.amount)}</span>
                     </li>
                   ))}
@@ -6784,6 +6888,11 @@
         return { ...c, sales };
       });
       const paymentsOf = (kind, id) => (db.debt_payments || []).filter(p => p.kind === kind && p.party_id === id);
+      const kasbonStatus = useMemo(() => kasbonStatusMap(db), [db.sales, db.offlineQueue, db.customers]);
+      const payRows = useMemo(() => kasbonPayRows(db), [db.debt_payments, db.sales, db.offlineQueue, db.customers]);
+      const kasbonLeft = (s) => s.total - payRows.filter(r => r.sale?.id === s.id).reduce((a, r) => a + r.amount, 0);
+      // A payment that finished every nota it touched is a settlement; anything else is an instalment
+      const settledPayment = (p) => payRows.filter(r => r.pay.id === p.id).every(r => r.settled);
 
       const debt = paying?.entity.debt || 0;
       const amountError = amount <= 0 ? 'Masukkan nominal.' : amount > debt ? `Melebihi sisa ${formatIDR(debt)}.` : null;
@@ -6859,13 +6968,14 @@
 
       const PaymentHistory = ({ list, supplier }) => list.length === 0 ? null : (
         <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Riwayat pembayaran</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{supplier ? 'Riwayat pembayaran' : 'Riwayat pembayaran kasbon'}</p>
           <ul className="mt-1 space-y-1 text-sm">
             {list.map(p => (
               <li key={p.id} className="flex items-center justify-between gap-2 text-slate-700">
                 <span className="min-w-0">{fmtDateTime(p.date)} · {p.by}{p.method && <> · <span className="font-medium text-slate-900">{PAYMENT_LABELS[p.method]}</span></>}</span>
-                <span className="flex flex-shrink-0 items-center gap-1">
-                  <span className="font-semibold text-emerald-700 tabular">{formatIDR(p.amount)}</span>
+                <span className="flex flex-shrink-0 items-center gap-2">
+                  {!supplier && <Badge tone={settledPayment(p) ? 'green' : 'amber'}>{settledPayment(p) ? 'Lunas' : 'Dicicil'}</Badge>}
+                  <span className={cx('font-semibold tabular', supplier || settledPayment(p) ? 'text-emerald-700' : 'text-amber-700')}>{formatIDR(p.amount)}</span>
                   {supplier && <Btn variant="ghost" size="sm" icon="download" onClick={() => downloadInvoice(p, supplier)} disabled={pdfFor === p.id} aria-label={`Unduh invoice pembayaran ${fmtDateTime(p.date)}`}>{pdfFor === p.id ? 'Membuat…' : 'Invoice'}</Btn>}
                 </span>
               </li>
@@ -6960,13 +7070,19 @@
                         {c.sales.map(s => (
                           <div key={s.id} className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
                             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                              <span className="font-mono font-semibold text-slate-900">{s.receipt_no}</span>
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono font-semibold text-slate-900">{s.receipt_no}</span>
+                                {kasbonStatus.get(s.id) === 'paid' ? <Badge tone="green">Lunas</Badge> : <Badge tone="rose">Kasbon</Badge>}
+                              </span>
                               <span className="text-slate-600">{fmtDateTime(s.date)} · kasir {s.cashier}</span>
                             </div>
                             <ul className="mt-2 space-y-0.5 text-sm">
                               {s.items.map((it, i) => <li key={i} className="flex justify-between gap-2"><span className="text-slate-800">{it.name} <span className="text-slate-500">× {it.qty}</span></span><span className="tabular">{formatIDR(it.qty * it.sell_price)}</span></li>)}
                             </ul>
-                            <p className="mt-2 border-t border-slate-100 pt-2 text-right text-sm">Total nota <span className="font-semibold tabular">{formatIDR(s.total)}</span></p>
+                            <p className="mt-2 flex flex-wrap justify-end gap-x-4 border-t border-slate-100 pt-2 text-sm">
+                              <span>Total nota <span className="font-semibold tabular">{formatIDR(s.total)}</span></span>
+                              {kasbonStatus.get(s.id) === 'partial' && <span>Sisa <span className="font-bold text-rose-600 tabular">{formatIDR(kasbonLeft(s))}</span></span>}
+                            </p>
                           </div>
                         ))}
                         <PaymentHistory list={paymentsOf('customer', c.id)} />
@@ -7342,7 +7458,7 @@
                 <tbody className="divide-y divide-slate-100">
                   {db.users.map(u => (
                     <tr key={u.id} className={cx('hover:bg-slate-50', u.status === 'Nonaktif' && 'text-slate-400')}>
-                      <td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar name={u.name} /><div><p className="font-semibold">{u.name}</p><p className="text-xs text-slate-500">{u.phone}</p></div></div></td>
+                      <td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar name={u.name} src={u.photo} /><div><p className="font-semibold">{u.name}</p><p className="text-xs text-slate-500">{u.phone}</p></div></div></td>
                       <td className="px-4 py-3">
                         <p className="font-mono text-sm">{u.username || '—'}</p>
                         {u.password_hash ? <Badge tone="green"><SvgIcon name="key" className="h-3 w-3" />Password aktif</Badge> : <Badge tone="amber">Belum ada password</Badge>}
@@ -7372,6 +7488,8 @@
                 <Btn onClick={save} disabled={saving}>{saving ? 'Menyimpan…' : 'Simpan'}</Btn>
               </>}>
               <div className="space-y-4">
+                <ImageUpload label="Foto profil" value={form.photo || ''} onChange={v => setForm({ ...form, photo: v })} hint="JPG atau PNG. Foto dipotong persegi. Tanpa foto, inisial nama yang tampil."
+                  formats={['image/jpeg', 'image/png']} options={{ size: 320, type: 'image/jpeg', maxBytes: 60 * 1024 }} />
                 <Field label="Nama lengkap" error={submitted ? errors.name : null}><input autoFocus value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputCls} /></Field>
 
                 <div className="rounded-xl border border-slate-200 p-4">
@@ -7424,6 +7542,7 @@
     // PERMISSIONS
     // =====================================================================
     function PermissionsMatrixModule({ db, setDb, notify }) {
+      const [attOpen, setAttOpen] = useState(false);
       const perm = normalizePermissions(db.permissions);
       const toggle = (role, key, label) => {
         const next = !perm[role][key];
@@ -7439,6 +7558,22 @@
         { key: 'can_view_finance', label: 'Lihat laba rugi', desc: 'Melihat laba, HPP, dan biaya operasional.', risky: true },
         { key: 'can_manage_suppliers', label: 'Supplier / Pemasok', desc: 'Membuat, mengubah, dan menghapus pesanan barang ke supplier.' }
       ];
+      const permRow = (p) => (
+        <li key={p.key} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_repeat(3,7rem)] sm:items-center sm:gap-2">
+          <div>
+            <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">{p.label}{p.risky && <Badge tone="amber">Sensitif</Badge>}</p>
+            <p className="text-sm text-slate-600">{p.desc}</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:contents">
+            {PERMISSION_ROLES.map(r => (
+              <div key={r} className="flex flex-col items-center gap-1.5 rounded-xl bg-slate-50 py-2 sm:bg-transparent sm:py-0">
+                <span className="text-xs font-medium text-slate-600 sm:hidden">{ROLE_LABELS[r]}</span>
+                <Switch checked={!!perm[r][p.key]} onChange={() => toggle(r, p.key, p.label)} label={`${p.label} untuk ${ROLE_LABELS[r]}`} />
+              </div>
+            ))}
+          </div>
+        </li>
+      );
       return (
         <div className="space-y-5">
           <PageHeader title="Hak Akses Karyawan" desc="Atur fitur untuk tiap peran: Kasir, Supervisor, dan Kepala Toko. Bos selalu punya akses penuh." />
@@ -7448,22 +7583,17 @@
               {PERMISSION_ROLES.map(r => <span key={r} className="text-center">{ROLE_LABELS[r]}</span>)}
             </div>
             <ul className="divide-y divide-slate-100">
-              {perms.map(p => (
-                <li key={p.key} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_repeat(3,7rem)] sm:items-center sm:gap-2">
-                  <div>
-                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">{p.label}{p.risky && <Badge tone="amber">Sensitif</Badge>}</p>
-                    <p className="text-sm text-slate-600">{p.desc}</p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 sm:contents">
-                    {PERMISSION_ROLES.map(r => (
-                      <div key={r} className="flex flex-col items-center gap-1.5 rounded-xl bg-slate-50 py-2 sm:bg-transparent sm:py-0">
-                        <span className="text-xs font-medium text-slate-600 sm:hidden">{ROLE_LABELS[r]}</span>
-                        <Switch checked={!!perm[r][p.key]} onChange={() => toggle(r, p.key, p.label)} label={`${p.label} untuk ${ROLE_LABELS[r]}`} />
-                      </div>
-                    ))}
-                  </div>
-                </li>
-              ))}
+              {perms.map(p => permRow(p))}
+              <li>
+                <button type="button" aria-expanded={attOpen} onClick={() => setAttOpen(v => !v)} className={cx('flex min-h-[64px] w-full items-center justify-between gap-3 p-4 text-left hover:bg-slate-50', focusRing)}>
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-900">Absensi, Lembur & Reward</span>
+                    <span className="block text-sm text-slate-600">Absen pribadi selalu terbuka. Bagian lain diatur satu per satu.</span>
+                  </span>
+                  <SvgIcon name={attOpen ? 'chevUp' : 'chevDown'} className="h-5 w-5 flex-shrink-0 text-slate-500" />
+                </button>
+                {attOpen && <ul className="divide-y divide-slate-100 border-t border-slate-100 bg-slate-50/60">{ATTENDANCE_SECTIONS.map(p => permRow(p))}</ul>}
+              </li>
             </ul>
           </Card>
         </div>
