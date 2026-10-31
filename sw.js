@@ -1,7 +1,7 @@
 // KasirBosku service worker: keeps the app and its libraries on the device so it opens without internet.
 // build.mjs fills VERSION and FILES. Every file name carries its version, so a saved copy is never out of date.
-const VERSION = 'kb-70c37e15d0';
-const FILES = ["./","app.8f5f091d63.js","app.23e879b1f8.css","manifest.webmanifest","privasi.html","syarat.html","legal.css","icons/icon-192.png","icons/icon-512.png","icons/apple-touch-icon.png","vendor/react-18.3.1.js","vendor/react-dom-18.3.1.js","vendor/prop-types-15.8.1.js","vendor/recharts-2.12.7.js","vendor/exceljs-4.4.0.js","vendor/jspdf-4.2.1.js","vendor/jspdf-autotable-5.0.9.js","vendor/jszip-3.10.1.js","vendor/inter-variable-5.0.20.woff2"];
+const VERSION = 'kb-5f53c4b3bf';
+const FILES = ["./","app.e9a01518b5.js","app.23e879b1f8.css","manifest.webmanifest","privasi.html","syarat.html","legal.css","icons/icon-192.png","icons/icon-512.png","icons/apple-touch-icon.png","vendor/react-18.3.1.js","vendor/react-dom-18.3.1.js","vendor/prop-types-15.8.1.js","vendor/recharts-2.12.7.js","vendor/exceljs-4.4.0.js","vendor/jspdf-4.2.1.js","vendor/jspdf-autotable-5.0.9.js","vendor/jszip-3.10.1.js","vendor/inter-variable-5.0.20.woff2"];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
