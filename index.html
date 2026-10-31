@@ -1277,6 +1277,37 @@
       if (!navigator.geolocation) return reject(new Error('unsupported'));
       navigator.geolocation.getCurrentPosition(p => resolve(p.coords), reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
     });
+    // Shown on attendance selfies. Chrome hides the phone model from the plain user agent, so it is asked for first.
+    async function deviceName() {
+      const ua = navigator.userAgent;
+      try {
+        const hints = await navigator.userAgentData?.getHighEntropyValues(['model', 'platform']);
+        if (hints?.model) return hints.model;
+        if (hints?.platform) return hints.platform;
+      } catch { /* the user agent below still names the device */ }
+      return ua.match(/Android [\d.]+; ([^;)]+)/)?.[1] || (/iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : 'Perangkat tidak dikenal');
+    }
+    // A frame from the live camera with its information burned in, so it cannot be cropped off without showing
+    function stampSelfie(video, lines) {
+      const w = Math.min(720, video.videoWidth), h = Math.round(video.videoHeight * w / video.videoWidth);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, w, h);
+      const size = Math.max(14, Math.round(w / 32)), gap = Math.round(size * 1.4), pad = Math.round(size * 0.8);
+      const band = lines.length * gap + pad * 2;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.68)';
+      ctx.fillRect(0, h - band, w, band);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `600 ${size}px Inter, Arial, sans-serif`;
+      ctx.textBaseline = 'top';
+      lines.forEach((t, i) => ctx.fillText(t, pad, h - band + pad + i * gap, w - pad * 2));
+      for (const q of [0.75, 0.6, 0.45]) {
+        const out = canvas.toDataURL('image/jpeg', q);
+        if (dataUrlBytes(out) <= 200 * 1024) return out;
+      }
+      return canvas.toDataURL('image/jpeg', 0.35);
+    }
     function getDeviceId() {
       try {
         let id = localStorage.getItem('kasirbosku_device');
@@ -2520,8 +2551,38 @@
 
       // Anti-cheat: store device, the rotating code from the store screen, and/or the store's GPS radius.
       // Every record keeps how it was verified so the Bos can check.
+      const [selfieAsk, setSelfieAsk] = useState(null);
+      const [deviceLabel, setDeviceLabel] = useState('');
+      useEffect(() => { deviceName().then(setDeviceLabel); }, []);
+      const selfieQueue = cloud ? cloudKey(session.tenant.id, 'selfies') : null;
+      // Sends waiting photos. One taken without signal stays on this device and goes out when the internet is back.
+      const flushSelfies = useCallback(async () => {
+        if (!cloud) return;
+        for (const item of readLocal(selfieQueue, []) || []) {
+          try {
+            const blob = await (await fetch(item.photo)).blob();
+            const { id } = await apiFetch('/api/selfies', { token: session.token, method: 'POST', blob });
+            setDb(prev => ({ ...prev, attendance: prev.attendance.map(a => a.id === item.att ? { ...a, [item.field]: id } : a) }));
+            writeLocal(selfieQueue, (readLocal(selfieQueue, []) || []).filter(x => x.key !== item.key));
+          } catch { return; }
+        }
+      }, [cloud]);
+      useEffect(() => {
+        flushSelfies();
+        window.addEventListener('online', flushSelfies);
+        return () => window.removeEventListener('online', flushSelfies);
+      }, [flushSelfies]);
+      // Resolves with the photo, or null when the person cancels
+      const takeSelfie = (label, coords) => new Promise(resolve => setSelfieAsk({ label, coords, resolve }));
+      const keepSelfie = (att, field, photo) => {
+        if (!cloud) return photo;
+        writeLocal(selfieQueue, [...(readLocal(selfieQueue, []) || []), { key: generateId('SF'), att, field, photo }]);
+        setTimeout(flushSelfies, 0);
+        return 'pending';
+      };
       const verifyPresence = async () => {
         const notes = [];
+        let coords = null;
         if (onStoreDevice) {
           if (work.attendance_store_device || attCodeOn) notes.push('perangkat toko');
         } else if (attCodeOn) {
@@ -2540,6 +2601,7 @@
           setClocking(true);
           try {
             const c = await getPosition();
+            coords = c;
             const dist = Math.round(haversineM(c.latitude, c.longitude, location.lat, location.lng));
             if (dist > work.attendance_radius + Math.min(c.accuracy || 0, 100)) {
               notify(`Anda sekitar ${dist} m dari toko. Absen hanya bisa dalam radius ${work.attendance_radius} m.`, 'warn');
@@ -2553,14 +2615,24 @@
         }
         const skew = Math.round(Math.abs(clockOffset) / 60000);
         if (skew >= 5) notes.push(`jam HP selisih ${skew} menit, dicatat dengan jam server`);
-        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi' };
+        if (work.attendance_selfie) {
+          notes.push('foto selfie');
+          if (!coords) {
+            setClocking(true);
+            try { coords = await getPosition(); } catch { /* the photo says the location was not read */ } finally { setClocking(false); }
+          }
+        }
+        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi', coords };
       };
 
       const clockIn = async () => {
         const v = await verifyPresence();
         if (!v) return;
+        const photo = work.attendance_selfie ? await takeSelfie('datang', v.coords) : null;
+        if (work.attendance_selfie && !photo) return;
         const shift = shiftOf(currentUser, work);
-        const rec = { id: generateId('ATT'), user_id: currentUser.id, date: dateKey(new Date(trueNow())), shift_id: shift.id, clock_in: new Date(trueNow()).toISOString(), clock_out: null, device_id: deviceId, verify_in: v.method };
+        const id = generateId('ATT');
+        const rec = { id, user_id: currentUser.id, date: dateKey(new Date(trueNow())), shift_id: shift.id, clock_in: new Date(trueNow()).toISOString(), clock_out: null, device_id: deviceId, verify_in: v.method, ...(photo ? { selfie_in: keepSelfie(id, 'selfie_in', photo) } : {}) };
         setDb(prev => ({ ...prev, attendance: [...prev.attendance, rec] }));
         const { lateMin } = attendanceInfo(rec, work, currentUser);
         notify(lateMin ? `Absen masuk ${fmtTime(rec.clock_in)} (${shift.name}) — terlambat ${fmtDuration(lateMin)}.` : `Absen masuk ${shift.name} tercatat ${fmtTime(rec.clock_in)}. Selamat bekerja!`, lateMin ? 'warn' : 'success');
@@ -2576,14 +2648,17 @@
         }
         const v = await verifyPresence();
         if (!v) return;
+        const photo = work.attendance_selfie ? await takeSelfie('pulang', v.coords) : null;
+        if (work.attendance_selfie && !photo) return;
         const outIso = new Date(trueNow()).toISOString();
         const { otMin } = attendanceInfo({ ...myAttendance, clock_out: outIso }, work, currentUser);
         const ot = otMin >= work.overtime_min
           ? { id: generateId('OT'), user_id: currentUser.id, date: myAttendance.date, minutes: otMin, status: 'pending', note: 'Lembur otomatis dari absen pulang', decided_by: null }
           : null;
+        const selfieOut = photo ? keepSelfie(myAttendance.id, 'selfie_out', photo) : null;
         setDb(prev => ({
           ...prev,
-          attendance: prev.attendance.map(a => a.id === myAttendance.id ? { ...a, clock_out: outIso, verify_out: v.method, ...(typeof reason === 'string' ? { early_reason: reason } : {}) } : a),
+          attendance: prev.attendance.map(a => a.id === myAttendance.id ? { ...a, clock_out: outIso, verify_out: v.method, ...(photo ? { selfie_out: selfieOut } : {}), ...(typeof reason === 'string' ? { early_reason: reason } : {}) } : a),
           overtime: ot ? [...prev.overtime, ot] : prev.overtime
         }));
         notify(ot ? `Absen pulang tercatat. Lembur ${fmtDuration(otMin)} diajukan ke Bos.` : `Absen pulang tercatat ${fmtTime(outIso)}. Terima kasih!`);
@@ -2668,6 +2743,12 @@
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-white focus:px-4 focus:py-2 focus:font-semibold focus:shadow-lg">Lewati ke konten</a>
 
           {codeAsk && <AttendanceCodePrompt onDone={(c) => { codeAsk.resolve(c); setCodeAsk(null); }} />}
+          {selfieAsk && <SelfieCamera label={selfieAsk.label} lines={() => [
+            `${currentUser.name} · Absen ${selfieAsk.label}`,
+            `${fmtDateTime(new Date(trueNow()).toISOString())} · ${db.business.name}`,
+            selfieAsk.coords ? `Lokasi ${selfieAsk.coords.latitude.toFixed(5)}, ${selfieAsk.coords.longitude.toFixed(5)}` : 'Lokasi tidak terbaca',
+            `Perangkat ${deviceLabel || deviceId}`
+          ]} onDone={(photo) => { selfieAsk.resolve(photo); setSelfieAsk(null); }} />}
           {earlyAsk && <EarlyLeaveModal minutes={earlyAsk.minutes} shiftEnd={shiftOf(currentUser, work).end} onClose={() => setEarlyAsk(null)} onConfirm={(r) => { setEarlyAsk(null); clockOut(r); }} />}
 
           {confirmLogout && (
@@ -2877,7 +2958,7 @@
                 {activeTab === 'products' && <ProductsModule {...pageProps} session={session} />}
                 {activeTab === 'customers' && <CustomersModule {...pageProps} />}
                 {activeTab === 'purchases' && isOwner && <PurchasesModule {...pageProps} />}
-                {activeTab === 'attendance' && <AttendanceModule {...pageProps} todayKey={todayKey} myAttendance={myAttendance} clockIn={clockIn} clockOut={clockOut} clocking={clocking} deviceId={deviceId} />}
+                {activeTab === 'attendance' && <AttendanceModule {...pageProps} session={session} todayKey={todayKey} myAttendance={myAttendance} clockIn={clockIn} clockOut={clockOut} clocking={clocking} deviceId={deviceId} />}
                 {activeTab === 'finance' && hasPermission('can_view_finance') && <FinanceModule {...pageProps} />}
                 {activeTab === 'debts' && <DebtsModule {...pageProps} />}
                 {activeTab === 'incentives' && <IncentivesModule {...pageProps} />}
@@ -4646,7 +4727,7 @@
 
       const [from, to] = rangeBounds(range, customFrom, customTo);
       const singleDay = from === to;
-      // A clicked bar narrows the product and transaction lists on screen. Exports always cover the whole period.
+      // A clicked bar narrows the whole page and its exports to that bar
       const [pick, setPick] = useState(null);
       useEffect(() => setPick(null), [from, to, cashierFilter, methodFilter]);
       // Long periods would give a bar too thin to read, so they group by month
@@ -4668,8 +4749,11 @@
         if (methodFilter !== 'all' && s.payment_method !== methodFilter && !(methodFilter === 'deposit' && s.deposit_used > 0)) return false;
         return true;
       });
-      const valid = scoped.filter(isValidSale);
-      const voided = scoped.filter(s => !isValidSale(s));
+      // The chart always shows the whole period; everything else on the page follows the clicked bar
+      const periodValid = scoped.filter(isValidSale);
+      const inView = pick ? scoped.filter(inPick) : scoped;
+      const valid = inView.filter(isValidSale);
+      const voided = inView.filter(s => !isValidSale(s));
       // Kasbon paid back in this period: one row per nota paid, under the method the customer paid with
       const cashierName = db.users.find(u => u.id === cashierFilter)?.name;
       const payRows = useMemo(() => kasbonPayRows(db), [db.debt_payments, db.sales, db.offlineQueue, db.customers]);
@@ -4679,7 +4763,7 @@
         if (cashierFilter === 'me' && p.by_id !== currentUser.id && p.by !== currentUser.name) return false;
         if (cashierFilter !== 'all' && cashierFilter !== 'me' && p.by_id !== cashierFilter && p.by !== cashierName) return false;
         return methodFilter === 'all' || (p.method || 'cash') === methodFilter;
-      }).map(({ pay: p, sale, amount, settled }, i) => ({ id: `${p.id}:${i}`, repay: true, sale, settled, date: p.date, receipt_no: sale?.receipt_no || `INV-${dateKey(new Date(p.date)).replace(/-/g, '')}-${String(p.id).slice(-4)}`, cashier: p.by || '-', customer_name: sale?.customer_name || db.customers.find(c => c.id === p.party_id)?.name || '-', payment_method: p.method || 'cash', total: amount, items: sale?.items || [] }));
+      }).map(({ pay: p, sale, amount, settled }, i) => ({ id: `${p.id}:${i}`, repay: true, sale, settled, date: p.date, receipt_no: sale?.receipt_no || `INV-${dateKey(new Date(p.date)).replace(/-/g, '')}-${String(p.id).slice(-4)}`, cashier: p.by || '-', customer_name: sale?.customer_name || db.customers.find(c => c.id === p.party_id)?.name || '-', payment_method: p.method || 'cash', total: amount, items: sale?.items || [] })).filter(inPick);
       const repaid = repayments.reduce((a, p) => a + p.total, 0);
 
       const gross = valid.reduce((a, s) => a + s.total, 0);
@@ -4695,21 +4779,21 @@
         if (singleDay) {
           return Array.from({ length: 18 }, (_, i) => {
             const h = 6 + i;
-            return { key: h, label: `${pad(h)}`, total: valid.filter(s => new Date(s.date).getHours() === h).reduce((a, s) => a + s.total, 0) };
+            return { key: h, label: `${pad(h)}`, total: periodValid.filter(s => new Date(s.date).getHours() === h).reduce((a, s) => a + s.total, 0) };
           });
         }
         const out = [];
         if (chartUnit === 'month') {
           for (let m = from.slice(0, 7); m <= to.slice(0, 7); m = dateKey(new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).slice(0, 7)) {
-            out.push({ key: m, label: new Date(m + '-01T00:00:00').toLocaleDateString('id-ID', { month: 'short', year: '2-digit' }), total: valid.filter(s => saleDay(s).startsWith(m)).reduce((a, s) => a + s.total, 0) });
+            out.push({ key: m, label: new Date(m + '-01T00:00:00').toLocaleDateString('id-ID', { month: 'short', year: '2-digit' }), total: periodValid.filter(s => saleDay(s).startsWith(m)).reduce((a, s) => a + s.total, 0) });
           }
           return out;
         }
         for (let k = from; k <= to; k = addDays(k, 1)) {
-          out.push({ key: k, label: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), total: valid.filter(s => saleDay(s) === k).reduce((a, s) => a + s.total, 0) });
+          out.push({ key: k, label: new Date(k + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }), total: periodValid.filter(s => saleDay(s) === k).reduce((a, s) => a + s.total, 0) });
         }
         return out;
-      }, [scoped.length, from, to, gross]);
+      }, [scoped.length, from, to, periodValid.reduce((a, s) => a + s.total, 0)]);
 
       const tallyProducts = (list) => {
         const map = {};
@@ -4719,12 +4803,10 @@
         }));
         return Object.values(map);
       };
-      const productRows = useMemo(() => tallyProducts(valid), [scoped.length, gross]);
+      const productRows = useMemo(() => tallyProducts(valid), [scoped.length, gross, pick?.key]);
       const productTotal = productRows.reduce((a, p) => a + p.omzet, 0) || 1;
       const productSorters = { qty: p => p.qty, omzet: p => p.omzet, share: p => p.omzet, name: p => p.name.toLowerCase() };
       const sortedProducts = sortBy(productRows, productSort, productSorters);
-      const shownProducts = pick ? sortBy(tallyProducts(valid.filter(inPick)), productSort, productSorters) : sortedProducts;
-      const shownProductTotal = pick ? shownProducts.reduce((a, p) => a + p.omzet, 0) || 1 : productTotal;
 
       const byMethod = Object.keys(PAYMENT_LABELS).map(m => {
         // Saldo was already income when it was left; this line shows how much of it got spent
@@ -4755,22 +4837,26 @@
           || (PAYMENT_LABELS[s.payment_method] || '').toLowerCase().includes(qs) || payState(s).toLowerCase().includes(qs)),
         txSort, { date: s => new Date(s.date).getTime(), total: s => s.total });
       // One sale can have two rows (the kasbon, then its repayment), so the list is never added up as one column
-      const shownTx = pick ? txList.filter(inPick) : txList;
       const txSales = txList.filter(s => !s.repay && s.status !== 'void');
       const txTotal = txSales.reduce((a, s) => a + s.total, 0);
       const txRepaid = txList.filter(s => s.repay).reduce((a, s) => a + s.total, 0);
       const txPaidNow = txSales.filter(s => s.payment_method !== 'bayar_nanti').reduce((a, s) => a + s.total, 0);
       const paidOff = (id) => payRows.filter(r => r.sale?.id === id).reduce((a, r) => a + r.amount, 0);
       const txUnpaid = txSales.filter(s => s.payment_method === 'bayar_nanti').reduce((a, s) => a + Math.max(0, s.total - paidOff(s.id)), 0);
-      const periodText = singleDay ? fmtDateShort(from) : `${fmtDateShort(from)} s/d ${fmtDateShort(to)}`;
+      // The dates the page is showing: the period, or the clicked day or month inside it
+      const [viewFrom, viewTo] = !pick || chartUnit === 'hour' ? [from, to]
+        : chartUnit === 'day' ? [pick.key, pick.key]
+        : [pick.key + '-01' < from ? from : pick.key + '-01', [dateKey(new Date(Number(pick.key.slice(0, 4)), Number(pick.key.slice(5, 7)), 0)), to].sort()[0]];
+      const periodText = pick ? (chartUnit === 'hour' ? `${fmtDateShort(from)} ${pick.label}` : pick.label)
+        : singleDay ? fmtDateShort(from) : `${fmtDateShort(from)} s/d ${fmtDateShort(to)}`;
 
       const [exporting, setExporting] = useState(false);
       const exportReport = async () => {
         setExporting(true);
-        const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => a.date.localeCompare(b.date));
+        const expenses = db.expenses.filter(e => e.date >= viewFrom && e.date <= viewTo).sort((a, b) => a.date.localeCompare(b.date));
         const expTotal = expenses.reduce((a, e) => a + (Number(e.amount) || 0), 0);
         const int = (v) => ({ v, t: 'int' });
-        const how = await downloadReport(`Laporan_Penjualan_${from}_${to}`, {
+        const how = await downloadReport(`Laporan_Penjualan_${viewFrom}_${viewTo}`, {
           title: `Laporan Penjualan · ${db.business.name}`,
           subtitle: `Periode ${periodText} · dibuat ${fmtDateTime(new Date().toISOString())} oleh ${currentUser.name}`,
           sheets: [
@@ -4867,7 +4953,7 @@
             body: productRows.length ? [...productRows].sort((a, b) => b.qty - a.qty).map(p => [p.name, p.qty, rp(p.omzet), `${Math.round(p.omzet / productTotal * 100)}%`]) : [[{ content: 'Tidak ada data', colSpan: 4 }]],
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } }
           });
-          const expenses = db.expenses.filter(e => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date));
+          const expenses = db.expenses.filter(e => e.date >= viewFrom && e.date <= viewTo).sort((a, b) => b.date.localeCompare(a.date));
           doc.autoTable({
             startY: section('Rincian Pengeluaran (Biaya Operasional)', `Semua uang keluar untuk operasional toko selama ${periodText}.`), margin, ...rightHead(3),
             head: [['Tanggal', 'Jenis pengeluaran', 'Keterangan', 'Uang keluar']],
@@ -4889,7 +4975,7 @@
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 9 }, columnStyles: { 4: { halign: 'right' } }
           });
           pdfFooter(doc, currentUser.name);
-          doc.save(`Laporan_Penjualan_${db.business.name.replace(/\s+/g, '_')}_${from}_${to}.pdf`);
+          doc.save(`Laporan_Penjualan_${db.business.name.replace(/\s+/g, '_')}_${viewFrom}_${viewTo}.pdf`);
           notify('PDF laporan penjualan diunduh.');
         } catch {
           notify('PDF gagal dibuat (butuh internet untuk pertama kali).', 'warn');
@@ -4946,7 +5032,7 @@
       const pendingRequests = isOwner ? allSalesOf(db).filter(s => s.status !== 'void' && s.void_request?.status === 'pending') : [];
       const VOID_REASONS = ['Salah input', 'Pelanggan batal pesan', 'Pelanggan salah sebut pesanan', 'Pembayaran gagal'];
 
-      const sessions = [...db.cashSessions].filter(s => { const k = dateKey(new Date(s.opened_at)); return k >= from && k <= to; }).reverse();
+      const sessions = [...db.cashSessions].filter(s => { const k = dateKey(new Date(s.opened_at)); return k >= viewFrom && k <= viewTo; }).reverse();
 
       return (
         <div className="space-y-5">
@@ -5019,11 +5105,11 @@
                 <h3 className="text-base font-bold text-slate-900">{{ hour: 'Penjualan per jam', day: 'Penjualan per hari', month: 'Penjualan per bulan' }[chartUnit]}</h3>
                 {pick
                   ? <Btn variant="ghost" size="sm" icon="x" onClick={() => setPick(null)}>Tampilkan semua</Btn>
-                  : valid.length > 0 && <span className="text-xs text-slate-500">Klik batang untuk melihat rinciannya</span>}
+                  : periodValid.length > 0 && <span className="text-xs text-slate-500">Klik batang untuk melihat rinciannya</span>}
               </div>
-              {pick && <p className="mt-1 text-sm text-slate-600" role="status">Produk dan transaksi di bawah hanya untuk <span className="font-semibold text-slate-900">{pick.label}</span>.</p>}
+              {pick && <p className="mt-1 text-sm text-slate-600" role="status">Semua angka di halaman ini untuk <span className="font-semibold text-slate-900">{pick.label}</span>.</p>}
               <div className="mt-4 h-60 cursor-pointer">
-                {valid.length === 0 ? <EmptyState icon="report" title="Belum ada penjualan di periode ini" /> : ResponsiveContainer && (
+                {periodValid.length === 0 ? <EmptyState icon="report" title="Belum ada penjualan di periode ini" /> : ResponsiveContainer && (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} onClick={pickBar} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -5084,9 +5170,9 @@
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {shownProducts.slice(0, 50).map(p => {
+                  {sortedProducts.slice(0, 50).map(p => {
                     const prod = db.products.find(x => x.id === productIdOf(p)) || { name: p.name };
-                    const share = Math.round(p.omzet / shownProductTotal * 100);
+                    const share = Math.round(p.omzet / productTotal * 100);
                     return (
                       <tr key={p.id} className="hover:bg-slate-50">
                         <td className="px-4 py-2.5"><div className="flex items-center gap-3"><ProductThumb product={prod} className="h-9 w-9 rounded-lg" textClass="text-xs" /><span className="font-medium text-slate-900">{p.name}</span></div></td>
@@ -5103,13 +5189,13 @@
                   })}
                 </tbody>
               </table>
-              {shownProducts.length === 0 && <EmptyState icon="products" title="Belum ada produk terjual" />}
+              {productRows.length === 0 && <EmptyState icon="products" title="Belum ada produk terjual" />}
             </div>
           </Card>
 
           <Card>
             <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({shownTx.length}){pick ? ` · ${pick.label}` : ''}</span></h3>
+              <h3 className="text-base font-bold text-slate-900">Daftar transaksi <span className="font-normal text-slate-500">({txList.length}){pick ? ` · ${pick.label}` : ''}</span></h3>
               <div className="flex flex-wrap items-center gap-3">
                 <SearchInput id="tx-search" value={search} onChange={setSearch} placeholder="Cari nota, pelanggan, produk, metode, lunas…" className="w-full sm:w-80" />
                 <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={showVoid} onChange={e => setShowVoid(e.target.checked)} className="h-4 w-4 rounded accent-brand-700" />Tampilkan yang dibatalkan</label>
@@ -5129,7 +5215,7 @@
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {shownTx.slice(0, limit).map(s => (
+                  {txList.slice(0, limit).map(s => (
                     <tr key={s.id} className={cx('hover:bg-slate-50', s.status === 'void' && 'text-slate-400')}>
                       <td className="whitespace-nowrap px-4 py-2.5 tabular">{singleDay ? fmtTime(s.date) : fmtDateTime(s.date)}</td>
                       <td className="px-4 py-2.5">
@@ -5158,8 +5244,8 @@
                   ))}
                 </tbody>
               </table>
-              {shownTx.length === 0 && <EmptyState icon="receipt" title="Tidak ada transaksi" desc="Coba ubah periode atau filter." />}
-              {shownTx.length > limit &&<div className="p-4 text-center"><Btn variant="secondary" onClick={() => setLimit(l => l + 30)}>Tampilkan lebih banyak</Btn></div>}
+              {txList.length === 0 && <EmptyState icon="receipt" title="Tidak ada transaksi" desc="Coba ubah periode atau filter." />}
+              {txList.length > limit &&<div className="p-4 text-center"><Btn variant="secondary" onClick={() => setLimit(l => l + 30)}>Tampilkan lebih banyak</Btn></div>}
             </div>
           </Card>
 
@@ -6544,7 +6630,108 @@
     // =====================================================================
     const REWARD_TYPES = ['Karyawan Teladan', 'Tepat Waktu', 'Target Penjualan', 'Lembur Ekstra', 'Lainnya'];
 
-    function AttendanceModule({ db, setDb, notify, currentUser, isOwner, hasPermission, todayKey, myAttendance, clockIn, clockOut, clocking, deviceId }) {
+    // Live camera only: there is no way to pick a file, so a saved picture cannot stand in for the person
+    function SelfieCamera({ label, lines, onDone }) {
+      const videoRef = useRef(null);
+      const [facing, setFacing] = useState('user');
+      const [shot, setShot] = useState('');
+      const [ready, setReady] = useState(false);
+      const [error, setError] = useState('');
+      const [attempt, setAttempt] = useState(0);
+      useEffect(() => {
+        if (shot) return undefined;
+        let stream, stopped = false;
+        setReady(false); setError('');
+        (async () => {
+          if (!navigator.mediaDevices?.getUserMedia) { setError('Perangkat atau browser ini tidak mendukung kamera.'); return; }
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 960 } } });
+            if (stopped) return stream.getTracks().forEach(t => t.stop());
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play();
+            setReady(true);
+          } catch (e) {
+            setError(e?.name === 'NotAllowedError' ? 'Izin kamera ditolak. Izinkan kamera di pengaturan browser, lalu coba lagi.'
+              : e?.name === 'NotFoundError' ? 'Kamera tidak ditemukan di perangkat ini.'
+              : e?.name === 'NotReadableError' ? 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu, lalu coba lagi.'
+              : 'Kamera tidak bisa dibuka. Coba lagi.');
+          }
+        })();
+        return () => { stopped = true; stream?.getTracks().forEach(t => t.stop()); };
+      }, [facing, shot, attempt]);
+      const capture = () => { const v = videoRef.current; if (v?.videoWidth) setShot(stampSelfie(v, lines())); };
+      return (
+        <Modal size="sm" title={`Foto absen ${label}`} desc="Lokasi, jam, dan nama perangkat tercetak di foto." onClose={() => onDone(null)}
+          footer={shot ? <>
+            <Btn variant="secondary" icon="refresh" onClick={() => setShot('')}>Ulangi</Btn>
+            <span className="flex-1" />
+            <Btn icon="check" onClick={() => onDone(shot)}>Pakai foto</Btn>
+          </> : error ? <>
+            <span className="flex-1" />
+            <Btn variant="secondary" onClick={() => onDone(null)}>Batal</Btn>
+            <Btn icon="refresh" onClick={() => setAttempt(n => n + 1)}>Coba lagi</Btn>
+          </> : <>
+            <Btn variant="secondary" icon="refresh" onClick={() => setFacing(f => f === 'user' ? 'environment' : 'user')}>{facing === 'user' ? 'Kamera belakang' : 'Kamera depan'}</Btn>
+            <span className="flex-1" />
+            <Btn icon="photo" disabled={!ready} onClick={capture}>Ambil foto</Btn>
+          </>}>
+          {shot
+            ? <img src={shot} alt={`Hasil foto absen ${label}`} width="720" height="540" className="h-auto w-full rounded-xl" />
+            : error
+              ? <p className="rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-800" role="alert">{error}</p>
+              : <div className="relative overflow-hidden rounded-xl bg-slate-900">
+                  <video ref={videoRef} playsInline muted aria-label="Pratinjau kamera" className={cx('aspect-[4/3] w-full object-cover', facing === 'user' && '-scale-x-100')} />
+                  {!ready && <p className="absolute inset-0 flex items-center justify-center text-sm text-white" role="status">Membuka kamera…</p>}
+                </div>}
+        </Modal>
+      );
+    }
+
+    // One attendance photo. On the server it needs the sign-in token, so it is fetched instead of linked.
+    function SelfiePhoto({ value, label, session }) {
+      const [src, setSrc] = useState('');
+      const [note, setNote] = useState('');
+      useEffect(() => {
+        if (value === 'pending') return setNote('Belum terkirim dari perangkat karyawan.');
+        if (value.startsWith('data:')) return setSrc(value);
+        let url = '', stopped = false;
+        fetch(`${CLOUD_API}/api/selfies/${value}`, { headers: { Authorization: `Bearer ${session.token}` } })
+          .then(async r => {
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error);
+            url = URL.createObjectURL(await r.blob());
+            if (!stopped) setSrc(url);
+          })
+          .catch(e => { if (!stopped) setNote(e.message || 'Foto tidak bisa dimuat. Periksa internet.'); });
+        return () => { stopped = true; if (url) URL.revokeObjectURL(url); };
+      }, [value]);
+      return (
+        <figure className="min-w-0">
+          <figcaption className="mb-1 text-xs font-semibold text-slate-600">{label}</figcaption>
+          {src ? <img src={src} alt={`Foto absen ${label}`} width="720" height="540" className="h-auto w-full rounded-lg" />
+            : <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{note || 'Memuat foto…'}</p>}
+        </figure>
+      );
+    }
+    function SelfieViewer({ name, records, session, onClose }) {
+      return (
+        <Modal size="lg" title={`Foto absen ${name}`} desc="Foto terhapus otomatis setelah 3 bulan." onClose={onClose}>
+          <ul className="space-y-4">
+            {records.map(r => (
+              <li key={r.id}>
+                <p className="mb-1.5 text-sm font-semibold text-slate-900">{fmtDateShort(r.date)}</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {r.selfie_in && <SelfiePhoto value={r.selfie_in} label={`Datang ${fmtTime(r.clock_in)}`} session={session} />}
+                  {r.selfie_out && <SelfiePhoto value={r.selfie_out} label={`Pulang ${fmtTime(r.clock_out)}`} session={session} />}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      );
+    }
+
+    function AttendanceModule({ db, setDb, notify, currentUser, isOwner, hasPermission, session, todayKey, myAttendance, clockIn, clockOut, clocking, deviceId }) {
+      const [selfies, setSelfies] = useState(null);
       const [tab, setTab] = useState(isOwner ? 'today' : 'me');
       const [month, setMonth] = useState(todayKey.slice(0, 7));
       const [rewardForm, setRewardForm] = useState(null);
@@ -6635,7 +6822,8 @@
       const ruleSummary = [
         work.attendance_gps && `wajib berada ≤ ${work.attendance_radius} m dari toko`,
         work.attendance_code && 'memakai kode dari layar kasir (kecuali di perangkat toko)',
-        !work.attendance_code && work.attendance_store_device && 'hanya dari perangkat kasir toko'
+        !work.attendance_code && work.attendance_store_device && 'hanya dari perangkat kasir toko',
+        work.attendance_selfie && 'foto selfie langsung dari kamera'
       ].filter(Boolean).join(' dan ');
 
       // ---------- Staff view ----------
@@ -6756,6 +6944,7 @@
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
+                          {(rec?.selfie_in || rec?.selfie_out) && <Btn variant="ghost" size="sm" icon="photo" onClick={() => setSelfies({ name: u.name, records: [rec] })}>Foto</Btn>}
                           {leave ? <Badge tone={LEAVE_TYPES[leave.type].tone}>{LEAVE_TYPES[leave.type].label}{leave.note ? ` · ${leave.note}` : ''}</Badge>
                             : !rec ? <Badge tone={isDayOff ? 'slate' : 'rose'}>{isDayOff ? 'Libur' : 'Belum hadir'}</Badge>
                             : info.lateMin ? <Badge tone="amber">Terlambat {fmtDuration(info.lateMin)}</Badge>
@@ -6839,7 +7028,13 @@
             <div className="mt-4 space-y-4">
               <div className="rounded-xl border border-slate-200 p-4">
                 <div className="flex items-center justify-between gap-4">
-                  <div><p id="att-gps" className="text-sm font-semibold text-slate-900">Wajib berada di toko (GPS)</p><p className="text-sm text-slate-600">HP karyawan harus dalam radius tertentu dari lokasi toko ({db.business.location.city}).</p></div>
+                  <div><p id="att-selfie" className="text-sm font-semibold text-slate-900">Wajib foto selfie</p><p className="text-sm text-slate-600">Foto langsung dari kamera depan atau belakang saat absen datang dan pulang, tanpa unggah file. Lokasi, jam, dan nama perangkat tercetak di foto. Foto terhapus otomatis setelah 3 bulan.</p></div>
+                  <Switch checked={!!work.attendance_selfie} onChange={v => updateWork({ attendance_selfie: v })} labelledBy="att-selfie" />
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div><p id="att-gps"className="text-sm font-semibold text-slate-900">Wajib berada di toko (GPS)</p><p className="text-sm text-slate-600">HP karyawan harus dalam radius tertentu dari lokasi toko ({db.business.location.city}).</p></div>
                   <Switch checked={!!work.attendance_gps} onChange={v => updateWork({ attendance_gps: v })} labelledBy="att-gps" />
                 </div>
                 {work.attendance_gps && (
@@ -6910,6 +7105,7 @@
                       <th scope="col" className="px-4 py-3">Karyawan</th><th scope="col" className="px-4 py-3 text-right">Hadir</th><th scope="col" className="px-4 py-3 text-right">Telat</th><th scope="col" className="px-4 py-3 text-right">Sakit</th><th scope="col" className="px-4 py-3 text-right">Izin</th><th scope="col" className="px-4 py-3 text-right">Alpha</th>
                       <th scope="col" className="px-4 py-3 text-right">Jam kerja</th><th scope="col" className="px-4 py-3 text-right">Lembur</th><th scope="col" className="px-4 py-3 text-right">Upah lembur</th>
                       <th scope="col" className="px-4 py-3 text-right">Reward</th><th scope="col" className="px-4 py-3 text-right">Gaji pokok</th><th scope="col" className="px-4 py-3 text-right">Total</th>
+                      <th scope="col" className="px-4 py-3"><span className="sr-only">Foto absen</span></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -6927,6 +7123,10 @@
                         <td className="px-4 py-3 text-right tabular">{formatIDR(r.reward)}</td>
                         <td className="px-4 py-3 text-right tabular">{formatIDR(u.base_salary)}</td>
                         <td className="px-4 py-3 text-right font-bold text-slate-900 tabular">{formatIDR(r.total)}</td>
+                        <td className="px-4 py-3 text-right">{(() => {
+                          const records = db.attendance.filter(a => a.user_id === u.id && a.date.startsWith(month) && (a.selfie_in || a.selfie_out)).sort((a, b) => b.date.localeCompare(a.date));
+                          return records.length > 0 && <Btn variant="ghost" size="sm" icon="photo" aria-label={`Foto absen ${u.name}`} onClick={() => setSelfies({ name: u.name, records })}>Foto</Btn>;
+                        })()}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -7027,6 +7227,7 @@
           {tab === 'overtime' && OvertimeView()}
           {tab === 'rewards' && RewardsView()}
 
+          {selfies && <SelfieViewer {...selfies} session={session} onClose={() => setSelfies(null)} />}
           {rewardForm && (
             <Modal title="Beri reward" onClose={() => setRewardForm(null)}
               footer={<><span className="flex-1" /><Btn variant="secondary" onClick={() => setRewardForm(null)}>Batal</Btn><Btn icon="gift" onClick={giveReward} disabled={!rewardForm.user_id || !rewardForm.amount}>Simpan</Btn></>}>
