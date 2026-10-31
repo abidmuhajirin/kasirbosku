@@ -1295,13 +1295,24 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, w, h);
       const size = Math.max(14, Math.round(w / 32)), gap = Math.round(size * 1.4), pad = Math.round(size * 0.8);
-      const band = lines.length * gap + pad * 2;
+      ctx.font = `600 ${size}px Inter, Arial, sans-serif`;
+      ctx.textBaseline = 'top';
+      // A full address is longer than one row
+      const wrap = (line) => {
+        const out = [''];
+        for (const word of line.split(' ')) {
+          const last = out[out.length - 1], joined = last ? `${last} ${word}` : word;
+          if (!last || ctx.measureText(joined).width <= w - pad * 2) out[out.length - 1] = joined;
+          else out.push(word);
+        }
+        return out;
+      };
+      const rows = lines.flatMap(wrap);
+      const band = rows.length * gap + pad * 2;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.68)';
       ctx.fillRect(0, h - band, w, band);
       ctx.fillStyle = '#ffffff';
-      ctx.font = `600 ${size}px Inter, Arial, sans-serif`;
-      ctx.textBaseline = 'top';
-      lines.forEach((t, i) => ctx.fillText(t, pad, h - band + pad + i * gap, w - pad * 2));
+      rows.forEach((t, i) => ctx.fillText(t, pad, h - band + pad + i * gap, w - pad * 2));
       for (const q of [0.75, 0.6, 0.45]) {
         const out = canvas.toDataURL('image/jpeg', q);
         if (dataUrlBytes(out) <= 200 * 1024) return out;
@@ -1533,6 +1544,30 @@
     function writeLocal(key, value) {
       try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
     }
+    // A store's data outgrows localStorage (about 2.5 MB of text on iPad), so it and waiting selfies live in IndexedDB
+    let deviceStore = null;
+    function openDeviceStore() {
+      deviceStore ||= new Promise((resolve, reject) => {
+        const req = indexedDB.open('kasirbosku', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('kv');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }).catch(e => { deviceStore = null; throw e; });
+      return deviceStore;
+    }
+    async function deviceRun(mode, action) {
+      const store = (await openDeviceStore()).transaction('kv', mode).objectStore('kv');
+      return new Promise((resolve, reject) => {
+        const req = action(store);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    const deviceGet = (key) => deviceRun('readonly', s => s.get(key));
+    const deviceSet = (key, value) => deviceRun('readwrite', s => s.put(value, key));
+    const deviceDel = (key) => deviceRun('readwrite', s => s.delete(key));
+    const deviceList = (prefix) => deviceRun('readonly', s => s.getAll(IDBKeyRange.bound(prefix, `${prefix}￿`)));
+
     function loadSession() {
       const s = readLocal(SESSION_KEY, null);
       return s && s.token && s.tenant && s.user ? s : null;
@@ -1679,8 +1714,22 @@
       if (id === 'permissions') return normalizePermissions(val);
       return val;
     }
-    function loadCloudDb(tenantId) {
-      const saved = readLocal(cloudKey(tenantId, 'db'), {}) || {};
+    // A copy still in localStorage may be cut short, so it moves here without its sync position and the first pull refills it
+    async function readSavedDb(tenantId) {
+      const key = cloudKey(tenantId, 'db');
+      try {
+        const saved = await deviceGet(key);
+        if (saved) return JSON.parse(saved);
+        const old = localStorage.getItem(key);
+        if (old) {
+          await deviceSet(key, old);
+          writeLocal(key, null);
+          writeLocal(cloudKey(tenantId, 'cursor'), null);
+        }
+        return old ? JSON.parse(old) : {};
+      } catch { return readLocal(key, {}) || {}; }
+    }
+    function loadCloudDb(saved) {
       const db = { categories: ['Semua'], ...Object.fromEntries(COLLECTION_KEYS.map(k => [k, []])), ...saved };
       return { ...db, business: normalizeDoc('business', saved.business || {}), permissions: normalizeDoc('permissions', saved.permissions || {}) };
     }
@@ -1903,7 +1952,7 @@
         const outbox = new Map((readLocal(cloudKey(tenantId, 'outbox'), []) || []).map(e => [recKey(e.coll, e.id), e]));
         const server = new Map();
         forEachRecord(db, (coll, id, rec) => { const k = recKey(coll, id); if (!outbox.has(k)) server.set(k, JSON.stringify(rec)); });
-        st.current = { outbox, server, prev: db, cursor: readLocal(cloudKey(tenantId, 'cursor'), 0) || 0, busy: false, again: false, dead: false, uploads: new Map(), timer: null };
+        st.current = { outbox, server, prev: db, cursor: db._cursor || 0, busy: false, again: false, dead: false, uploads: new Map(), timer: null };
       }
       const [status, setStatus] = useState({ phase: 'syncing', pending: st.current ? st.current.outbox.size : 0, last: null, error: null });
 
@@ -1979,8 +2028,9 @@
         for (let page = 0; page < 500; page++) {
           const res = await apiFetch(`/api/sync/pull?since=${s.cursor}`, { token: cb.current.token });
           if (res.rows.length) applyRows(res.rows);
+          // Saved inside the data: a position ahead of it would hide the missing records from every later pull
+          if (res.cursor !== s.cursor) cb.current.setDb(prev => ({ ...prev, _cursor: res.cursor }));
           s.cursor = res.cursor;
-          writeLocal(cloudKey(tenantId, 'cursor'), s.cursor);
           learnServerTime(res.now);
           if (res.license) cb.current.onLicense?.({ ...res.license, blocked: false, message: '' });
           cb.current.onSessionUpdate?.({ token: res.token, user: res.user, tenant: res.tenant });
@@ -2371,15 +2421,25 @@
         if (next.token !== cur.token) vaultRefresh(next);
         return next;
       });
-      return <App key={`${session.tenant.id}:${session.user.id}`} session={session} onSessionUpdate={update} onLogout={end} />;
+      return <CloudApp key={`${session.tenant.id}:${session.user.id}`} session={session} onSessionUpdate={update} onLogout={end} />;
+    }
+
+    function CloudApp({ session, onSessionUpdate, onLogout }) {
+      const [saved, setSaved] = useState(null);
+      useEffect(() => {
+        readSavedDb(session.tenant.id).then(setSaved);
+        navigator.storage?.persist?.().catch(() => {});
+      }, []);
+      if (!saved) return <p className="flex h-full items-center justify-center text-sm text-slate-600" role="status">Memuat data toko…</p>;
+      return <App session={session} saved={saved} onSessionUpdate={onSessionUpdate} onLogout={onLogout} />;
     }
 
     // =====================================================================
     // APP
     // =====================================================================
-    function App({ session = null, onSessionUpdate, onLogout }) {
+    function App({ session = null, saved, onSessionUpdate, onLogout }) {
       const cloud = !!session;
-      const [db, setDbRaw] = useState(() => cloud ? loadCloudDb(session.tenant.id) : loadDb());
+      const [db, setDbRaw] = useState(() => cloud ? loadCloudDb(saved) : loadDb());
       // What this user changed, kept per resulting state; written to the log once React commits that state
       const pendingLog = useRef(new Map());
       const setDb = useCallback((update) => setDbRaw(prev => {
@@ -2425,8 +2485,28 @@
       }, [db]);
 
       const quotaWarned = useRef(false);
+      const dbSave = useRef({ busy: false, next: null });
       useEffect(() => {
-        try { localStorage.setItem(cloud ? cloudKey(session.tenant.id, 'db') : STORAGE_KEY, JSON.stringify(db)); quotaWarned.current = false; }
+        if (cloud) {
+          // Writes one at a time; while one runs, only the newest waiting copy matters
+          const q = dbSave.current;
+          q.next = JSON.stringify(db);
+          if (q.busy) return;
+          q.busy = true;
+          (async () => {
+            while (q.next) {
+              const copy = q.next;
+              q.next = null;
+              try { await deviceSet(cloudKey(session.tenant.id, 'db'), copy); quotaWarned.current = false; }
+              catch {
+                if (!quotaWarned.current) { quotaWarned.current = true; notify('Penyimpanan perangkat penuh. Data di server tetap aman, tetapi aplikasi butuh internet saat dibuka lagi.', 'warn'); }
+              }
+            }
+            q.busy = false;
+          })();
+          return;
+        }
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); quotaWarned.current = false; }
         catch (e) {
           // Only a full quota is actionable; blocked storage (private mode, sandboxed preview) just means no persistence
           const full = e && (e.name === 'QuotaExceededError' || e.code === 22);
@@ -2554,31 +2634,53 @@
       const [selfieAsk, setSelfieAsk] = useState(null);
       const [deviceLabel, setDeviceLabel] = useState('');
       useEffect(() => { deviceName().then(setDeviceLabel); }, []);
-      const selfieQueue = cloud ? cloudKey(session.tenant.id, 'selfies') : null;
+      const selfiePrefix = cloud ? `${cloudKey(session.tenant.id, 'selfie')}:` : '';
+      const selfieState = useRef({ busy: false, memory: new Map(), warned: false });
+      const latestToken = useRef(session?.token);
+      latestToken.current = session?.token;
       // Sends waiting photos. One taken without signal stays on this device and goes out when the internet is back.
       const flushSelfies = useCallback(async () => {
-        if (!cloud) return;
-        for (const item of readLocal(selfieQueue, []) || []) {
-          try {
+        const st = selfieState.current;
+        if (!cloud || st.busy) return;
+        st.busy = true;
+        try {
+          const legacy = cloudKey(session.tenant.id, 'selfies');
+          for (const item of readLocal(legacy, []) || []) await deviceSet(selfiePrefix + item.key, item);
+          writeLocal(legacy, null);
+          const stored = await deviceList(selfiePrefix).catch(() => []);
+          for (const item of new Map([...stored, ...st.memory.values()].map(x => [x.key, x])).values()) {
             const blob = await (await fetch(item.photo)).blob();
-            const { id } = await apiFetch('/api/selfies', { token: session.token, method: 'POST', blob });
+            const { id } = await apiFetch('/api/selfies', { token: latestToken.current, method: 'POST', blob });
             setDb(prev => ({ ...prev, attendance: prev.attendance.map(a => a.id === item.att ? { ...a, [item.field]: id } : a) }));
-            writeLocal(selfieQueue, (readLocal(selfieQueue, []) || []).filter(x => x.key !== item.key));
-          } catch { return; }
-        }
+            st.memory.delete(item.key);
+            await deviceDel(selfiePrefix + item.key).catch(() => {});
+          }
+          st.warned = false;
+        } catch (e) {
+          // No connection is expected and retried quietly; anything else would otherwise stay invisible
+          if (e.status !== 0 && !st.warned) { st.warned = true; notify(`Foto absen belum terkirim: ${e.message}`, 'warn'); }
+        } finally { st.busy = false; }
       }, [cloud]);
       useEffect(() => {
         flushSelfies();
+        const timer = setInterval(flushSelfies, 60000);
         window.addEventListener('online', flushSelfies);
-        return () => window.removeEventListener('online', flushSelfies);
+        return () => { clearInterval(timer); window.removeEventListener('online', flushSelfies); };
       }, [flushSelfies]);
       // Resolves with the photo, or null when the person cancels
-      const takeSelfie = (label, coords) => new Promise(resolve => setSelfieAsk({ label, coords, resolve }));
+      const takeSelfie = (label, v) => new Promise(resolve => setSelfieAsk({ label, coords: v.coords, address: v.address, resolve }));
       const keepSelfie = (att, field, photo) => {
         if (!cloud) return photo;
-        writeLocal(selfieQueue, [...(readLocal(selfieQueue, []) || []), { key: generateId('SF'), att, field, photo }]);
-        setTimeout(flushSelfies, 0);
+        const item = { key: generateId('SF'), att, field, photo };
+        // Memory carries it through this session even if the device refuses to store it
+        selfieState.current.memory.set(item.key, item);
+        deviceSet(selfiePrefix + item.key, item).catch(() => {}).finally(flushSelfies);
         return 'pending';
+      };
+      const findAddress = async (coords) => {
+        if (!cloud || !coords) return '';
+        try { return (await apiFetch(`/api/address?lat=${coords.latitude}&lng=${coords.longitude}`, { token: latestToken.current })).address; }
+        catch { return ''; }
       };
       const verifyPresence = async () => {
         const notes = [];
@@ -2615,20 +2717,22 @@
         }
         const skew = Math.round(Math.abs(clockOffset) / 60000);
         if (skew >= 5) notes.push(`jam HP selisih ${skew} menit, dicatat dengan jam server`);
+        let address = '';
         if (work.attendance_selfie) {
           notes.push('foto selfie');
-          if (!coords) {
-            setClocking(true);
-            try { coords = await getPosition(); } catch { /* the photo says the location was not read */ } finally { setClocking(false); }
-          }
+          setClocking(true);
+          try {
+            if (!coords) coords = await getPosition();
+            address = await findAddress(coords);
+          } catch { /* the photo says the location was not read */ } finally { setClocking(false); }
         }
-        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi', coords };
+        return { method: notes.length ? notes.join(' · ') : 'Tanpa verifikasi', coords, address };
       };
 
       const clockIn = async () => {
         const v = await verifyPresence();
         if (!v) return;
-        const photo = work.attendance_selfie ? await takeSelfie('datang', v.coords) : null;
+        const photo = work.attendance_selfie ? await takeSelfie('datang', v) : null;
         if (work.attendance_selfie && !photo) return;
         const shift = shiftOf(currentUser, work);
         const id = generateId('ATT');
@@ -2648,7 +2752,7 @@
         }
         const v = await verifyPresence();
         if (!v) return;
-        const photo = work.attendance_selfie ? await takeSelfie('pulang', v.coords) : null;
+        const photo = work.attendance_selfie ? await takeSelfie('pulang', v) : null;
         if (work.attendance_selfie && !photo) return;
         const outIso = new Date(trueNow()).toISOString();
         const { otMin } = attendanceInfo({ ...myAttendance, clock_out: outIso }, work, currentUser);
@@ -2746,7 +2850,8 @@
           {selfieAsk && <SelfieCamera label={selfieAsk.label} lines={() => [
             `${currentUser.name} · Absen ${selfieAsk.label}`,
             `${fmtDateTime(new Date(trueNow()).toISOString())} · ${db.business.name}`,
-            selfieAsk.coords ? `Lokasi ${selfieAsk.coords.latitude.toFixed(5)}, ${selfieAsk.coords.longitude.toFixed(5)}` : 'Lokasi tidak terbaca',
+            ...(selfieAsk.address ? [selfieAsk.address] : []),
+            selfieAsk.coords ? `Koordinat ${selfieAsk.coords.latitude.toFixed(5)}, ${selfieAsk.coords.longitude.toFixed(5)}` : 'Lokasi tidak terbaca',
             `Perangkat ${deviceLabel || deviceId}`
           ]} onDone={(photo) => { selfieAsk.resolve(photo); setSelfieAsk(null); }} />}
           {earlyAsk && <EarlyLeaveModal minutes={earlyAsk.minutes} shiftEnd={shiftOf(currentUser, work).end} onClose={() => setEarlyAsk(null)} onConfirm={(r) => { setEarlyAsk(null); clockOut(r); }} />}
@@ -5126,7 +5231,9 @@
               </div>
             </Card>
 
-            <Card className="p-5 lg:col-span-4">
+            {/* On wide screens the chart alone sets this row's height; a long list scrolls inside instead of stretching it */}
+            <div className="relative lg:col-span-4">
+            <Card className="p-5 lg:absolute lg:inset-0 lg:overflow-y-auto" tabIndex={0} role="region" aria-label="Metode pembayaran dan per kasir">
               <h3 className="text-base font-bold text-slate-900">Metode pembayaran</h3>
               {byMethod.length === 0 ? <p className="mt-3 text-sm text-slate-500">Belum ada data.</p> : (
                 <ul className="mt-3 space-y-3">
@@ -5152,6 +5259,7 @@
                 </ul>
               </>}
             </Card>
+            </div>
           </div>
 
           <Card>
@@ -6661,7 +6769,7 @@
       }, [facing, shot, attempt]);
       const capture = () => { const v = videoRef.current; if (v?.videoWidth) setShot(stampSelfie(v, lines())); };
       return (
-        <Modal size="sm" title={`Foto absen ${label}`} desc="Lokasi, jam, dan nama perangkat tercetak di foto." onClose={() => onDone(null)}
+        <Modal size="sm" title={`Foto absen ${label}`} desc="Lokasi, jam, dan nama perangkat tercetak di foto. Alamat dari OpenStreetMap." onClose={() => onDone(null)}
           footer={shot ? <>
             <Btn variant="secondary" icon="refresh" onClick={() => setShot('')}>Ulangi</Btn>
             <span className="flex-1" />
@@ -6692,7 +6800,7 @@
       const [src, setSrc] = useState('');
       const [note, setNote] = useState('');
       useEffect(() => {
-        if (value === 'pending') return setNote('Belum terkirim dari perangkat karyawan.');
+        if (value === 'pending') return setNote('Foto belum sampai ke server. Buka aplikasi di perangkat karyawan saat online.');
         if (value.startsWith('data:')) return setSrc(value);
         let url = '', stopped = false;
         fetch(`${CLOUD_API}/api/selfies/${value}`, { headers: { Authorization: `Bearer ${session.token}` } })
@@ -6714,7 +6822,7 @@
     }
     function SelfieViewer({ name, records, session, onClose }) {
       return (
-        <Modal size="lg" title={`Foto absen ${name}`} desc="Foto terhapus otomatis setelah 3 bulan." onClose={onClose}>
+        <Modal size="lg" title={`Foto absen ${name}`} desc="Foto terhapus otomatis setelah 3 bulan. Alamat dari OpenStreetMap." onClose={onClose}>
           <ul className="space-y-4">
             {records.map(r => (
               <li key={r.id}>
