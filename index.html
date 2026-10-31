@@ -627,10 +627,11 @@
       );
     }
 
-    function StatCard({ label, value, sub, icon, tone = 'teal', highlight, subTone }) {
+    // facts: supporting lines that come and go with the data. Two rows stay reserved, so a card never changes height.
+    function StatCard({ label, value, sub, facts, icon, tone = 'teal', highlight, subTone, className }) {
       const iconTone = { teal: 'bg-brand-500 text-white', amber: 'bg-amber-50 text-amber-700', rose: 'bg-rose-50 text-rose-700', blue: 'bg-blue-50 text-blue-700', purple: 'bg-purple-50 text-purple-700' }[tone];
       return (
-        <div className={cx('rounded-2xl border p-4 shadow-sm', highlight ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-200 bg-white')}>
+        <div className={cx('rounded-2xl border p-4 shadow-sm', highlight ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-200 bg-white', className)}>
           <div className="flex items-start justify-between gap-2">
             <span className={cx('text-sm font-medium', highlight ? 'text-brand-100' : 'text-slate-600')}>{label}</span>
             <span className={cx('flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full', highlight ? 'bg-white/15 text-white' : iconTone)}>
@@ -639,6 +640,7 @@
           </div>
           <p className={cx('mt-2 text-lg font-bold tabular break-words sm:text-2xl', highlight ? 'text-white' : 'text-slate-900')}>{value}</p>
           {sub && <p className={cx('mt-1 text-xs', highlight ? 'text-brand-100' : subTone || 'text-slate-500')}>{sub}</p>}
+          {facts && <div className="mt-1 h-8 text-xs leading-4 text-slate-500">{facts.filter(Boolean).map(f => <p key={f} className="truncate" title={f}>{f}</p>)}</div>}
         </div>
       );
     }
@@ -5196,13 +5198,14 @@
             </div>
           </Card>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Penjualan (termasuk pajak)" value={formatIDR(gross)} sub={`Total pemasukan ${formatIDR(net)}${depositIn ? ` · Termasuk deposit ${formatIDR(depositIn)}` : ''}`} icon="dollar" />
-            <StatCard label="Transaksi" value={valid.length} sub={voided.length ? `${voided.length} dibatalkan` : `Rata-rata ${formatIDR(avg)}`} icon="receipt" tone="blue" />
-            <StatCard label="Item terjual" value={itemsSold} sub={`${productRows.length} jenis produk`} icon="products" tone="purple" />
+          {/* Rupiah cards span the row on phones and four columns wait for xl: below that a full amount would not fit on one line */}
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <StatCard className="col-span-2 sm:col-span-1" label="Penjualan (termasuk pajak)" value={formatIDR(gross)} facts={[`Total pemasukan ${formatIDR(net)}`, depositIn > 0 && `Termasuk deposit ${formatIDR(depositIn)}`]} icon="dollar" />
+            <StatCard label="Transaksi" value={valid.length} facts={[`Rata-rata ${formatIDR(avg)}`, voided.length > 0 && `${voided.length} dibatalkan`]} icon="receipt" tone="blue" />
+            <StatCard label="Item terjual" value={itemsSold} facts={[`${productRows.length} jenis produk`]} icon="products" tone="purple" />
             {isOwner
-              ? <StatCard label="Laba kotor" value={formatIDR(net - hpp)} sub={`HPP ${formatIDR(hpp)}${discount ? ` · Diskon ${formatIDR(discount)}` : ''}`} icon="investors" tone="amber" />
-              : <StatCard label="Diskon diberikan" value={formatIDR(discount)} icon="incentives" tone="amber" />}
+              ? <StatCard className="col-span-2 sm:col-span-1" label="Laba kotor" value={formatIDR(net - hpp)} facts={[`HPP ${formatIDR(hpp)}`, discount > 0 && `Diskon ${formatIDR(discount)}`]} icon="investors" tone="amber" />
+              : <StatCard className="col-span-2 sm:col-span-1" label="Diskon diberikan" value={formatIDR(discount)} facts={[]} icon="incentives" tone="amber" />}
           </div>
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
