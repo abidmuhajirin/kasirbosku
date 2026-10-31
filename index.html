@@ -147,7 +147,7 @@
     // Excel reports: a styled .xlsx (title band, coloured headers, Rupiah format, totals).
     // ExcelJS loads on first use; without internet the same tables are saved as CSV.
     // A cell is a value, or { v, t } to format one cell differently from its column.
-    const XLS_FMT = { money: '"Rp"#,##0;[Red]-"Rp"#,##0', int: '#,##0', dec: '#,##0.0', pct: '0%' };
+    const XLS_FMT = { money: '"Rp"#,##0;[Red]-"Rp"#,##0', paren: '"(Rp"#,##0")"', int: '#,##0', dec: '#,##0.0', pct: '0%' };
     const xlsVal = (c) => c && typeof c === 'object' && 'v' in c ? c.v : c;
     async function downloadReport(filename, { title, subtitle, sheets }) {
       try {
@@ -195,7 +195,7 @@
             };
             t.rows.forEach((cells, i) => put(cells, i % 2 ? 'FFF6F8FC' : null));
             if (!t.rows.length) put(['Tidak ada data'], null);
-            if (t.total) put(t.total, 'FFEEF4FF', true);
+            (t.totals || (t.total ? [t.total] : [])).forEach(row => put(row, 'FFEEF4FF', true));
             r++;
           });
         });
@@ -208,7 +208,7 @@
         return 'xlsx';
       } catch {
         downloadCsv(filename + '.csv', [[title], [subtitle], [], ...sheets.flatMap(sh => sh.tables.flatMap(t => [
-          ...(t.heading ? [[t.heading]] : []), t.columns.map(c => c.header), ...t.rows.map(row => row.map(xlsVal)), ...(t.total ? [t.total.map(xlsVal)] : []), []
+          ...(t.heading ? [[t.heading]] : []), t.columns.map(c => c.header), ...t.rows.map(row => row.map(xlsVal)), ...(t.totals || (t.total ? [t.total] : [])).map(row => row.map(xlsVal)), []
         ]))]);
         return 'csv';
       }
@@ -4676,7 +4676,10 @@
         const repay = back.reduce((a, p) => a + p.total, 0);
         return { m, count: list.length + back.length, total: list.reduce((a, s) => a + s.total, 0) + repay, repay };
       }).filter(x => x.count);
-      const moneyMethods = byMethod.filter(x => x.m !== 'deposit');
+      // Money received, by method. Kasbon is a sale not paid yet and saldo was received earlier, so neither counts here
+      const moneyMethods = byMethod.filter(x => x.m !== 'deposit' && x.m !== 'bayar_nanti');
+      const otherMethods = byMethod.filter(x => x.m === 'deposit' || x.m === 'bayar_nanti');
+      const otherLabel = (x) => x.m === 'deposit' ? 'Ninggal Uang (potong saldo)' : 'Kasbon baru';
       const methodSum = byMethod.reduce((a, x) => a + x.total, 0) || 1;
 
       const byCashier = db.users.map(u => {
@@ -4693,6 +4696,13 @@
         .filter(s => !qs || s.receipt_no.toLowerCase().includes(qs) || s.customer_name.toLowerCase().includes(qs) || s.items.some(it => it.name.toLowerCase().includes(qs))
           || (PAYMENT_LABELS[s.payment_method] || '').toLowerCase().includes(qs) || payState(s).toLowerCase().includes(qs)),
         txSort, { date: s => new Date(s.date).getTime(), total: s => s.total });
+      // One sale can have two rows (the kasbon, then its repayment), so the list is never added up as one column
+      const txSales = txList.filter(s => !s.repay && s.status !== 'void');
+      const txTotal = txSales.reduce((a, s) => a + s.total, 0);
+      const txRepaid = txList.filter(s => s.repay).reduce((a, s) => a + s.total, 0);
+      const txPaidNow = txSales.filter(s => s.payment_method !== 'bayar_nanti').reduce((a, s) => a + s.total, 0);
+      const paidOff = (id) => payRows.filter(r => r.sale?.id === id).reduce((a, r) => a + r.amount, 0);
+      const txUnpaid = txSales.filter(s => s.payment_method === 'bayar_nanti').reduce((a, s) => a + Math.max(0, s.total - paidOff(s.id)), 0);
       const periodText = singleDay ? fmtDateShort(from) : `${fmtDateShort(from)} s/d ${fmtDateShort(to)}`;
 
       const [exporting, setExporting] = useState(false);
@@ -4713,7 +4723,8 @@
                 ['Pelunasan kasbon diterima', repaid], ['Ninggal uang masuk (termasuk penjualan)', depositIn], ['Saldo ninggal uang dipakai', depositUsed], ['Pengeluaran / biaya operasional', expTotal]
               ] },
               { heading: 'Metode pembayaran', columns: [{ header: 'Metode' }, { header: 'Total', t: 'money' }, { header: 'Jumlah', width: 12, t: 'int' }, { header: 'Termasuk pelunasan kasbon', width: 26, t: 'money' }],
-                rows: moneyMethods.map(x => [PAYMENT_LABELS[x.m], x.total, x.count, x.repay]), total: ['Total', moneyMethods.reduce((a, x) => a + x.total, 0), moneyMethods.reduce((a, x) => a + x.count, 0), repaid] },
+                rows: moneyMethods.map(x => [PAYMENT_LABELS[x.m], x.total, x.count, x.repay]), total: ['Total uang masuk', moneyMethods.reduce((a, x) => a + x.total, 0), moneyMethods.reduce((a, x) => a + x.count, 0), repaid] },
+              ...(otherMethods.length ? [{ heading: 'Bukan uang masuk', columns: [{ header: 'Keterangan' }, { header: 'Total', t: 'money' }, { header: 'Jumlah', t: 'int' }], rows: otherMethods.map(x => [otherLabel(x), x.total, x.count]) }] : []),
               { heading: 'Per kasir', columns: [{ header: 'Kasir' }, { header: 'Total', t: 'money' }, { header: 'Nota', t: 'int' }],
                 rows: byCashier.map(x => [x.u.name, x.total, x.count]) }
             ] },
@@ -4721,9 +4732,13 @@
               columns: [{ header: 'Waktu', width: 20 }, { header: 'No. Nota', width: 22 }, { header: 'Kasir', width: 18 }, { header: 'Pelanggan', width: 20 }, { header: 'Metode', width: 12 },
                 { header: 'Subtotal', width: 15, t: 'money' }, { header: 'Diskon', width: 13, t: 'money' }, { header: 'Voucher', width: 12 }, { header: 'Pajak', width: 13, t: 'money' }, { header: 'Potong saldo', width: 14, t: 'money' }, { header: 'Ninggal uang', width: 14, t: 'money' }, { header: 'Total', width: 15, t: 'money' }, { header: 'Status', width: 16 }, { header: 'Item', width: 50 }],
               rows: txList.map(s => s.repay
-                ? [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], '', '', '', '', '', '', s.total, payState(s), s.items.map(it => `${it.name} x${it.qty}`).join('; ')]
+                ? [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, `${PAYMENT_LABELS[s.payment_method]} · Pelunasan kasbon`, '', '', '', '', '', '', { v: s.total, t: 'paren' }, payState(s), s.items.map(it => `${it.name} x${it.qty}`).join('; ')]
                 : [fmtDateTime(s.date), s.receipt_no, s.cashier, s.customer_name, PAYMENT_LABELS[s.payment_method], s.subtotal, s.discount || 0, s.coupon_code || '', s.tax || 0, s.deposit_used || 0, s.deposit_in || 0, s.total, s.status === 'void' ? 'Batal' : payState(s) || (s.payment_method === 'bayar_nanti' ? 'Kasbon' : 'Selesai'), s.items.map(it => `${it.name} x${it.qty}`).join('; ')]),
-              total: ['Total', '', '', '', '', '', '', '', '', '', '', txList.filter(s => s.status !== 'void').reduce((a, s) => a + s.total, 0), '', '']
+              totals: [
+                ['Total penjualan', '', '', '', '', '', '', '', '', '', '', txTotal, '', 'Nominal dalam kurung adalah pelunasan kasbon, tidak dihitung sebagai penjualan'],
+                ['Uang masuk', '', '', '', '', '', '', '', '', '', '', txPaidNow + txRepaid, '', `Penjualan non-kasbon ${pdfMoney(txPaidNow)} + pelunasan ${pdfMoney(txRepaid)}`],
+                ['Kasbon belum dibayar', '', '', '', '', '', '', '', '', '', '', txUnpaid, '', '']
+              ]
             }] },
             { name: 'Produk', tables: [{
               columns: [{ header: 'Produk', width: 34 }, { header: 'Terjual', width: 12, t: 'int' }, { header: 'Omzet', width: 18, t: 'money' }, { header: 'Porsi', width: 10, t: 'pct' }],
@@ -4778,9 +4793,13 @@
             return y + 24;
           };
           doc.autoTable({
-            startY: section('Metode Pembayaran', 'Termasuk pelunasan kasbon yang diterima di periode ini.'), margin, ...rightHead(1, 2),
+            startY: section('Metode Pembayaran', 'Uang yang diterima, termasuk pelunasan kasbon di periode ini.'), margin, ...rightHead(1, 2),
             head: [['Metode', 'Transaksi', 'Total']],
-            body: byMethod.length ? byMethod.map(x => [PAYMENT_LABELS[x.m] + (x.m === 'deposit' ? ' (potong saldo)' : ''), x.count, rp(x.total)]) : [[{ content: 'Tidak ada data', colSpan: 3 }]],
+            body: moneyMethods.length ? moneyMethods.map(x => [PAYMENT_LABELS[x.m], x.count, rp(x.total)]) : [[{ content: 'Tidak ada uang masuk', colSpan: 3 }]],
+            foot: [
+              ['Total uang masuk', { content: moneyMethods.reduce((a, x) => a + x.count, 0), styles: { halign: 'right' } }, { content: rp(moneyMethods.reduce((a, x) => a + x.total, 0)), styles: { halign: 'right' } }],
+              ...otherMethods.map(x => [`${otherLabel(x)}, bukan uang masuk`, { content: x.count, styles: { halign: 'right' } }, { content: rp(x.total), styles: { halign: 'right' } }].map(c => typeof c === 'string' ? { content: c, styles: { fontStyle: 'normal', fillColor: 255 } } : { ...c, styles: { ...c.styles, fontStyle: 'normal', fillColor: 255 } }))
+            ], footStyles, showFoot: 'lastPage',
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } }
           });
           doc.autoTable({
@@ -4798,10 +4817,16 @@
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 10 }, columnStyles: { 3: { halign: 'right' } }
           });
           doc.autoTable({
-            startY: section('Daftar Transaksi', `${txList.length} baris, urut seperti di layar.`), margin, ...rightHead(4),
+            startY: section('Daftar Transaksi', `${txList.length} baris, urut seperti di layar.${txRepaid ? ' Nominal dalam kurung adalah pelunasan kasbon, tidak dihitung sebagai penjualan.' : ''}`), margin, ...rightHead(4),
             head: [['Waktu', 'Nota', 'Pelanggan', 'Metode', 'Total']],
-            foot: [[{ content: 'Total', colSpan: 4 }, { content: rp(txList.filter(s => s.status !== 'void').reduce((a, s) => a + s.total, 0)), styles: { halign: 'right' } }]], footStyles, showFoot: 'lastPage',
-            body: txList.length ? txList.map(s => [fmtDateTime(s.date), s.receipt_no, s.customer_name, [PAYMENT_LABELS[s.payment_method], payState(s), s.status === 'void' ? 'Batal' : ''].filter(Boolean).join(' · '), rp(s.total)]) : [[{ content: 'Tidak ada transaksi', colSpan: 5 }]],
+            foot: [
+              [{ content: 'Total penjualan', colSpan: 4 }, { content: rp(txTotal), styles: { halign: 'right' } }],
+              [{ content: `Uang masuk (non-kasbon ${rp(txPaidNow)} + pelunasan ${rp(txRepaid)})`, colSpan: 4 }, { content: rp(txPaidNow + txRepaid), styles: { halign: 'right' } }],
+              [{ content: 'Kasbon belum dibayar', colSpan: 4 }, { content: rp(txUnpaid), styles: { halign: 'right' } }]
+            ], footStyles, showFoot: 'lastPage',
+            body: txList.length ? txList.map(s => [fmtDateTime(s.date), s.receipt_no, s.customer_name,
+              (s.repay ? [PAYMENT_LABELS[s.payment_method], 'Pelunasan kasbon', payState(s) === 'Sebagian' ? 'Sebagian' : ''] : [PAYMENT_LABELS[s.payment_method], payState(s), s.status === 'void' ? 'Batal' : '']).filter(Boolean).join(' · '),
+              s.repay ? `(${rp(s.total)})` : rp(s.total)]) : [[{ content: 'Tidak ada transaksi', colSpan: 5 }]],
             headStyles: { fillColor: PDF_BLUE }, styles: { fontSize: 9 }, columnStyles: { 4: { halign: 'right' } }
           });
           const pages = doc.getNumberOfPages();
